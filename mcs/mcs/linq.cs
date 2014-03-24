@@ -85,6 +85,13 @@ namespace Mono.CSharp.Linq
 				return rmg;
 			}
 
+			protected override Expression DoResolveDynamic (ResolveContext ec, Expression memberExpr)
+			{
+				ec.Report.Error (1979, loc,
+					"Query expressions with a source or join sequence of type `dynamic' are not allowed");
+				return null;
+			}
+
 			#region IErrorHandler Members
 
 			bool OverloadResolver.IErrorHandler.AmbiguousCandidates (ResolveContext ec, MemberSpec best, MemberSpec ambiguous)
@@ -123,7 +130,7 @@ namespace Mono.CSharp.Linq
 
 					if (!Convert.ImplicitConversionExists (rc, a.Expr, source_type)) {
 						rc.Report.Error (1936, loc, "An implementation of `{0}' query expression pattern for source type `{1}' could not be found",
-							best.Name, TypeManager.CSharpName (a.Type));
+							best.Name, a.Type.GetSignatureForError ());
 						return true;
 					}
 				}
@@ -411,19 +418,6 @@ namespace Mono.CSharp.Linq
 
 		public override Expression BuildQueryClause (ResolveContext ec, Expression lSide, Parameter parameter)
 		{
-/*
-			expr = expr.Resolve (ec);
-			if (expr == null)
-				return null;
-
-			if (expr.Type == InternalType.Dynamic || expr.Type == TypeManager.void_type) {
-				ec.Report.Error (1979, expr.Location,
-					"Query expression with a source or join sequence of type `{0}' is not allowed",
-					TypeManager.CSharpName (expr.Type));
-				return null;
-			}
-*/
-
 			if (IdentifierType != null)
 				expr = CreateCastExpression (expr);
 
@@ -817,15 +811,14 @@ namespace Mono.CSharp.Linq
 		}
 
 		public QueryBlock (Block parent, Location start)
-			: base (parent, ParametersCompiled.EmptyReadOnlyParameters, start)
+			: base (parent, ParametersCompiled.EmptyReadOnlyParameters, start, Flags.CompilerGenerated)
 		{
-			flags |= Flags.CompilerGenerated;
 		}
 
 		public void AddRangeVariable (RangeVariable variable)
 		{
 			variable.Block = this;
-			AddLocalName (variable.Name, variable);
+			TopBlock.AddLocalName (variable.Name, variable, true);
 		}
 
 		public override void Error_AlreadyDeclared (string name, INamedBlockVariable variable, string reason)

@@ -1,5 +1,5 @@
 /*
- * sgen-os-posix.c: Simple generational GC.
+ * sgen-os-posix.c: Posix support.
  *
  * Author:
  *	Paolo Molaro (lupus@ximian.com)
@@ -7,25 +7,20 @@
  * 	Geoff Norton (gnorton@novell.com)
  *
  * Copyright 2010 Novell, Inc (http://www.novell.com)
+ * Copyright (C) 2012 Xamarin Inc
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- * 
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- * 
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License 2.0 as published by the Free Software Foundation;
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License 2.0 along with this library; if not, write to the Free
+ * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include "config.h"
@@ -39,6 +34,7 @@
 #include "metadata/gc-internal.h"
 #include "metadata/sgen-archdep.h"
 #include "metadata/object-internals.h"
+#include "utils/mono-signal-handler.h"
 
 #if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__)
 const static int suspend_signal_num = SIGXFSZ;
@@ -51,28 +47,24 @@ static MonoSemType suspend_ack_semaphore;
 static MonoSemType *suspend_ack_semaphore_ptr;
 
 static sigset_t suspend_signal_mask;
+static sigset_t suspend_ack_signal_mask;
 
 static void
 suspend_thread (SgenThreadInfo *info, void *context)
 {
 	int stop_count;
-#ifdef USE_MONO_CTX
-	MonoContext monoctx;
-#else
+#ifndef USE_MONO_CTX
 	gpointer regs [ARCH_NUM_REGS];
 #endif
 	gpointer stack_start;
 
-	g_assert (info->doing_handshake);
-
 	info->stopped_domain = mono_domain_get ();
 	info->stopped_ip = context ? (gpointer) ARCH_SIGCTX_IP (context) : NULL;
-	stop_count = mono_sgen_global_stop_count;
+	info->signal = 0;
+	stop_count = sgen_global_stop_count;
 	/* duplicate signal */
 	if (0 && info->stop_count == stop_count)
 		return;
-
-	mono_sgen_fill_thread_info_for_suspend (info);
 
 	stack_start = context ? (char*) ARCH_SIGCTX_SP (context) - REDZONE_SIZE : NULL;
 	/* If stack_start is not within the limits, then don't set it
@@ -82,17 +74,16 @@ suspend_thread (SgenThreadInfo *info, void *context)
 
 #ifdef USE_MONO_CTX
 		if (context) {
-			mono_sigctx_to_monoctx (context, &monoctx);
-			info->monoctx = &monoctx;
+			mono_sigctx_to_monoctx (context, &info->ctx);
 		} else {
-			info->monoctx = NULL;
+			memset (&info->ctx, 0, sizeof (MonoContext));
 		}
 #else
 		if (context) {
 			ARCH_COPY_SIGCTX_REGS (regs, context);
-			info->stopped_regs = regs;
+			memcpy (&info->regs, regs, sizeof (info->regs));
 		} else {
-			info->stopped_regs = NULL;
+			memset (&info->regs, 0, sizeof (info->regs));
 		}
 #endif
 	} else {
@@ -101,9 +92,17 @@ suspend_thread (SgenThreadInfo *info, void *context)
 
 	/* Notify the JIT */
 	if (mono_gc_get_gc_callbacks ()->thread_suspend_func)
-		mono_gc_get_gc_callbacks ()->thread_suspend_func (info->runtime_data, context);
+		mono_gc_get_gc_callbacks ()->thread_suspend_func (info->runtime_data, context, NULL);
 
-	DEBUG (4, fprintf (gc_debug_file, "Posting suspend_ack_semaphore for suspend from %p %p\n", info, (gpointer)mono_native_thread_id_get ()));
+	SGEN_LOG (4, "Posting suspend_ack_semaphore for suspend from %p %p", info, (gpointer)mono_native_thread_id_get ());
+
+	/*
+	Block the restart signal. 
+	We need to block the restart signal while posting to the suspend_ack semaphore or we race to sigsuspend,
+	which might miss the signal and get stuck.
+	*/
+	pthread_sigmask (SIG_BLOCK, &suspend_ack_signal_mask, NULL);
+
 	/* notify the waiting thread */
 	MONO_SEM_POST (suspend_ack_semaphore_ptr);
 	info->stop_count = stop_count;
@@ -112,90 +111,77 @@ suspend_thread (SgenThreadInfo *info, void *context)
 	do {
 		info->signal = 0;
 		sigsuspend (&suspend_signal_mask);
-	} while (info->signal != restart_signal_num && info->doing_handshake);
+	} while (info->signal != restart_signal_num);
 
-	DEBUG (4, fprintf (gc_debug_file, "Posting suspend_ack_semaphore for resume from %p %p\n", info, (gpointer)mono_native_thread_id_get ()));
+	/* Unblock the restart signal. */
+	pthread_sigmask (SIG_UNBLOCK, &suspend_ack_signal_mask, NULL);
+
+	SGEN_LOG (4, "Posting suspend_ack_semaphore for resume from %p %p\n", info, (gpointer)mono_native_thread_id_get ());
 	/* notify the waiting thread */
 	MONO_SEM_POST (suspend_ack_semaphore_ptr);
 }
 
 /* LOCKING: assumes the GC lock is held (by the stopping thread) */
-static void
-suspend_handler (int sig, siginfo_t *siginfo, void *context)
+MONO_SIGNAL_HANDLER_FUNC (static, suspend_handler, (int sig, siginfo_t *siginfo, void *context))
 {
+	/*
+	 * The suspend signal handler potentially uses syscalls that
+	 * can set errno, and it calls functions that use the hazard
+	 * pointer machinery.  Since we're interrupting other code we
+	 * must restore those to the values they had when we
+	 * interrupted.
+	 */
+
 	SgenThreadInfo *info;
 	int old_errno = errno;
+	int hp_save_index = mono_hazard_pointer_save_for_signal_handler ();
 
 	info = mono_thread_info_current ();
+	suspend_thread (info, context);
 
-	if (info) {
-		suspend_thread (info, context);
-	} else {
-		/* This can happen while a thread is dying */
-		g_print ("no thread info in suspend\n");
-	}
-
+	mono_hazard_pointer_restore_for_signal_handler (hp_save_index);
 	errno = old_errno;
 }
 
-static void
-restart_handler (int sig)
+MONO_SIGNAL_HANDLER_FUNC (static, restart_handler, (int sig))
 {
 	SgenThreadInfo *info;
 	int old_errno = errno;
 
 	info = mono_thread_info_current ();
-
-	/*
-	 * If a thread is dying there might be no thread info.  In
-	 * that case we rely on info->doing_handshake.
-	 */
-	if (info) {
-		info->signal = restart_signal_num;
-		DEBUG (4, fprintf (gc_debug_file, "Restart handler in %p %p\n", info, (gpointer)mono_native_thread_id_get ()));
-	}
-
+	info->signal = restart_signal_num;
+	SGEN_LOG (4, "Restart handler in %p %p", info, (gpointer)mono_native_thread_id_get ());
 	errno = old_errno;
 }
 
 gboolean
-mono_sgen_resume_thread (SgenThreadInfo *info)
+sgen_resume_thread (SgenThreadInfo *info)
 {
 	return mono_threads_pthread_kill (info, restart_signal_num) == 0;
 }
 
 gboolean
-mono_sgen_suspend_thread (SgenThreadInfo *info)
+sgen_suspend_thread (SgenThreadInfo *info)
 {
 	return mono_threads_pthread_kill (info, suspend_signal_num) == 0;
 }
 
 void
-mono_sgen_wait_for_suspend_ack (int count)
+sgen_wait_for_suspend_ack (int count)
 {
 	int i, result;
 
 	for (i = 0; i < count; ++i) {
 		while ((result = MONO_SEM_WAIT (suspend_ack_semaphore_ptr)) != 0) {
 			if (errno != EINTR) {
-				g_error ("sem_wait ()");
+				g_error ("MONO_SEM_WAIT FAILED with %d errno %d (%s)", result, errno, strerror (errno));
 			}
 		}
 	}
 }
 
-gboolean
-mono_sgen_park_current_thread_if_doing_handshake (SgenThreadInfo *p)
-{
-    if (!p->doing_handshake)
-	    return FALSE;
-
-    suspend_thread (p, NULL);
-    return TRUE;
-}
-
 int
-mono_sgen_thread_handshake (BOOL suspend)
+sgen_thread_handshake (BOOL suspend)
 {
 	int count, result;
 	SgenThreadInfo *info;
@@ -208,16 +194,11 @@ mono_sgen_thread_handshake (BOOL suspend)
 		if (mono_native_thread_id_equals (mono_thread_info_get_tid (info), me)) {
 			continue;
 		}
+		if (info->gc_disabled)
+			continue;
 		/*if (signum == suspend_signal_num && info->stop_count == global_stop_count)
 			continue;*/
-		if (suspend) {
-			g_assert (!info->doing_handshake);
-			info->doing_handshake = TRUE;
-		} else {
-			g_assert (info->doing_handshake);
-			info->doing_handshake = FALSE;
-		}
-		result = pthread_kill (mono_thread_info_get_tid (info), signum);
+		result = mono_threads_pthread_kill (info, signum);
 		if (result == 0) {
 			count++;
 		} else {
@@ -225,13 +206,15 @@ mono_sgen_thread_handshake (BOOL suspend)
 		}
 	} END_FOREACH_THREAD_SAFE
 
-	mono_sgen_wait_for_suspend_ack (count);
+	sgen_wait_for_suspend_ack (count);
+
+	SGEN_LOG (4, "%s handshake for %d threads\n", suspend ? "suspend" : "resume", count);
 
 	return count;
 }
 
 void
-mono_sgen_os_init (void)
+sgen_os_init (void)
 {
 	struct sigaction sinfo;
 
@@ -245,13 +228,17 @@ mono_sgen_os_init (void)
 		g_error ("failed sigaction");
 	}
 
-	sinfo.sa_handler = restart_handler;
+	sinfo.sa_handler = (void*) restart_handler;
 	if (sigaction (restart_signal_num, &sinfo, NULL) != 0) {
 		g_error ("failed sigaction");
 	}
 
 	sigfillset (&suspend_signal_mask);
 	sigdelset (&suspend_signal_mask, restart_signal_num);
+
+	sigemptyset (&suspend_ack_signal_mask);
+	sigaddset (&suspend_ack_signal_mask, restart_signal_num);
+	
 }
 
 int

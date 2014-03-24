@@ -29,11 +29,13 @@
 
 #if NET_4_5
 
+using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.ExceptionServices;
 
 namespace System.Runtime.CompilerServices
 {
-	public struct TaskAwaiter<TResult>
+	public struct TaskAwaiter<TResult> : ICriticalNotifyCompletion
 	{
 		readonly Task<TResult> task;
 
@@ -50,8 +52,11 @@ namespace System.Runtime.CompilerServices
 
 		public TResult GetResult ()
 		{
+			if (!task.IsCompleted)
+				task.WaitCore (Timeout.Infinite, CancellationToken.None, true);
+
 			if (task.Status != TaskStatus.RanToCompletion)
-				throw TaskAwaiter.HandleUnexpectedTaskResult (task);
+				ExceptionDispatchInfo.Capture (TaskAwaiter.HandleUnexpectedTaskResult (task)).Throw ();
 
 			return task.Result;
 		}
@@ -61,7 +66,15 @@ namespace System.Runtime.CompilerServices
 			if (continuation == null)
 				throw new ArgumentNullException ("continuation");
 
-			TaskAwaiter.HandleOnCompleted (task, continuation, true);
+			TaskAwaiter.HandleOnCompleted (task, continuation, true, true);
+		}
+
+		public void UnsafeOnCompleted (Action continuation)
+		{
+			if (continuation == null)
+				throw new ArgumentNullException ("continuation");
+
+			TaskAwaiter.HandleOnCompleted (task, continuation, true, false);
 		}
 	}
 }

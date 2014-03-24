@@ -4,6 +4,7 @@
 // Author:
 //   Daniel Stodden (stodden@in.tum.de)
 //   Marek Safar (marek.safar@seznam.cz)
+//   Ilker Cetinkaya (mail@ilker.de)
 //
 // (C) 2002 Ximian, Inc.
 //
@@ -171,14 +172,49 @@ namespace Mono.CSharp
 		{
 			GenerateCompileUnitStart (compileUnit);
 
+			List<CodeNamespaceImport> imports = null;
+			foreach (CodeNamespace codeNamespace in compileUnit.Namespaces) {
+				if (!string.IsNullOrEmpty (codeNamespace.Name))
+					continue;
+
+				if (codeNamespace.Imports.Count == 0)
+					continue;
+
+				if (imports == null)
+					imports = new List<CodeNamespaceImport> ();
+
+				foreach (CodeNamespaceImport i in codeNamespace.Imports)
+					imports.Add (i);
+			}
+
+			if (imports != null) {
+				imports.Sort ((a, b) => a.Namespace.CompareTo (b.Namespace));
+				foreach (var import in imports)
+					GenerateNamespaceImport (import);
+
+				Output.WriteLine ();
+			}
+
 			if (compileUnit.AssemblyCustomAttributes.Count > 0) {
 				OutputAttributes (compileUnit.AssemblyCustomAttributes, 
 					"assembly: ", false);
 				Output.WriteLine ("");
 			}
 
-			foreach (CodeNamespace ns in compileUnit.Namespaces)
-				GenerateNamespace (ns);
+			CodeNamespaceImportCollection global_imports = null;
+			foreach (CodeNamespace codeNamespace in compileUnit.Namespaces) {
+				if (string.IsNullOrEmpty (codeNamespace.Name)) {
+					global_imports = codeNamespace.Imports;
+					codeNamespace.Imports = new CodeNamespaceImportCollection ();
+				}
+
+				GenerateNamespace (codeNamespace);
+
+				if (global_imports != null) {
+					codeNamespace.Imports = global_imports;
+					global_imports = null;
+				}
+			}
 
 			GenerateCompileUnitEnd (compileUnit);
 		}
@@ -1385,14 +1421,14 @@ namespace Mono.CSharp
 		}
 
 		static bool is_identifier_start_character (char c)
-                {
-                        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '@' || Char.IsLetter (c);
-                }
+		{
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '@' || Char.IsLetter (c);
+		}
 
-                static bool is_identifier_part_character (char c)
-                {
-                        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9') || Char.IsLetter (c);
-                }
+		static bool is_identifier_part_character (char c)
+		{
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9') || Char.IsLetter (c);
+		}
 		
 		protected override bool IsValidIdentifier (string identifier)
 		{
@@ -1406,13 +1442,13 @@ namespace Mono.CSharp
 				return false;
 
 			if (!is_identifier_start_character (identifier [0]))
-                                return false;
-                        
-                        for (int i = 1; i < identifier.Length; i ++)
-                                if (! is_identifier_part_character (identifier [i]))
-                                        return false;
-                        
-                        return true;
+				return false;
+
+			for (int i = 1; i < identifier.Length; i ++)
+				if (! is_identifier_part_character (identifier [i]))
+					return false;
+
+			return true;
 		}
 
 		protected override bool Supports (GeneratorSupport supports)
@@ -1578,9 +1614,13 @@ namespace Mono.CSharp
 
 		static void FillKeywordTable ()
 		{
-			keywordsTable = new Hashtable ();
-			foreach (string keyword in keywords) {
-				keywordsTable.Add (keyword, keyword);
+			lock (keywords) {
+				if (keywordsTable == null) {
+					keywordsTable = new Hashtable ();
+					foreach (string keyword in keywords) {
+						keywordsTable.Add (keyword, keyword);
+					}
+				}
 			}
 		}
 

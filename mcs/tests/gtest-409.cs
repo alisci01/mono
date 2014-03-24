@@ -95,6 +95,48 @@ public class ConditionalParsing
 	{
 		int a = (int)(A<int>.Value);
 	}
+	
+	static int Test_12 (bool arg)
+	{
+		return arg ? Foo (() => { return 1; }) : 1;
+	}
+	
+	static int Foo (Func<int> arg)
+	{
+		return 1;
+	}
+
+	void Test_13 (object param)
+	{
+		if (param as bool? ?? false) {} else {}
+	}
+
+	int? Test_14 ()
+	{
+		bool a = false, b = false;
+		object c = null;
+
+		return a ? (b ? c as int? : null) : null;
+	}
+
+	Action<int> Test_15 (Action<int> arg)
+	{
+		return arg ?? (Helper<int>);
+	}
+
+	void Test_16 ()
+	{
+		bool? b = Test (1, arg:2);
+	}
+
+	static void Helper<T> (T arg)
+	{
+	}
+
+	static bool Test (object b, int arg)
+	{
+		return false;
+	}
 
 	public static void Main ()
 	{

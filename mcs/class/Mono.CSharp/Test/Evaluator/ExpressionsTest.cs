@@ -1,3 +1,31 @@
+//
+// ExpressionsTest.cs
+//
+// Authors:
+//	Marek Safar  <marek.safar@gmail.com>
+//
+// Copyright (C) 2012 Xamarin Inc (http://www.xamarin.com)
+//
+// Permission is hereby granted, free of charge, to any person obtaining
+// a copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to
+// permit persons to whom the Software is furnished to do so, subject to
+// the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+
 using System;
 using NUnit.Framework;
 using Mono.CSharp;
@@ -20,6 +48,12 @@ namespace MonoTests.EvaluatorTest
 		public void StatementExpression_2 ()
 		{
 			Evaluator.Run ("var a = new int [] {1,2,3}; var b = a.Length;");
+		}
+
+		[Test]
+		public void AnonymousType ()
+		{
+			Evaluator.Run ("var foo = new { Bar = \"baz\" };");
 		}
 
 		[Test]
@@ -96,6 +130,22 @@ namespace MonoTests.EvaluatorTest
 			Assert.AreEqual ("1+", sres, "The result should have been the input string, since we have a partial input");
 		}
 
+		[Test]
+		public void GotoWithUnreachableStatement ()
+		{
+			Evaluator.Run ("using System;");
+
+			string code = "var x = new Action(() => {" +
+			"Console.WriteLine(\"beforeGoto\");" +
+			"goto L;" +
+		"L:" +
+			"Console.WriteLine(\"afterGoto\");" +
+			"});";
+
+			Assert.IsTrue (Evaluator.Run (code), "#1");
+			Assert.IsTrue (Evaluator.Run ("x();"), "#2");
+		}
+
 #if NET_4_0
 		[Test]
 		public void DynamicStatement ()
@@ -103,6 +153,17 @@ namespace MonoTests.EvaluatorTest
 			Evaluator.Run ("dynamic d = 1;");
 			Evaluator.Run ("d = 'a';");
 			Evaluator.Run ("d.GetType ();");
+		}
+#endif
+
+#if NET_4_5
+		[Test]
+		public void AwaitExpression ()
+		{
+			Evaluator.WaitOnTask = true;
+			var res = Evaluator.Evaluate("var res = await System.Threading.Tasks.Task.FromResult (1) + await System.Threading.Tasks.Task.FromResult (2);");
+			res = Evaluator.Evaluate ("res;");
+			Assert.AreEqual (3, res, "#1");
 		}
 #endif
 	}

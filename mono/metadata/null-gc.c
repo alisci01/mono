@@ -11,6 +11,7 @@
 #include <mono/metadata/mono-gc.h>
 #include <mono/metadata/gc-internal.h>
 #include <mono/metadata/runtime.h>
+#include <mono/utils/mono-threads.h>
 
 #ifdef HAVE_NULL_GC
 
@@ -22,6 +23,9 @@ mono_gc_base_init (void)
 	memset (&cb, 0, sizeof (cb));
 	cb.mono_method_is_critical = mono_runtime_is_critical_method;
 	cb.mono_gc_pthread_create = (gpointer)mono_gc_pthread_create;
+	cb.thread_exit = mono_gc_pthread_exit;
+
+	mono_threads_init (&cb, sizeof (MonoThreadInfo));
 }
 
 void
@@ -63,16 +67,6 @@ int64_t
 mono_gc_get_heap_size (void)
 {
 	return 2*1024*1024;
-}
-
-void
-mono_gc_disable (void)
-{
-}
-
-void
-mono_gc_enable (void)
-{
 }
 
 gboolean
@@ -122,7 +116,7 @@ mono_gc_weak_link_add (void **link_addr, MonoObject *obj, gboolean track)
 }
 
 void
-mono_gc_weak_link_remove (void **link_addr)
+mono_gc_weak_link_remove (void **link_addr, gboolean track)
 {
 	*link_addr = NULL;
 }
@@ -200,6 +194,12 @@ mono_gc_wbarrier_generic_store (gpointer ptr, MonoObject* value)
 }
 
 void
+mono_gc_wbarrier_generic_store_atomic (gpointer ptr, MonoObject *value)
+{
+	InterlockedWritePointer (ptr, value);
+}
+
+void
 mono_gc_wbarrier_generic_nostore (gpointer ptr)
 {
 }
@@ -225,13 +225,13 @@ mono_gc_is_critical_method (MonoMethod *method)
 }
 
 MonoMethod*
-mono_gc_get_managed_allocator (MonoVTable *vtable, gboolean for_box)
+mono_gc_get_managed_allocator (MonoClass *klass, gboolean for_box)
 {
 	return NULL;
 }
 
 MonoMethod*
-mono_gc_get_managed_array_allocator (MonoVTable *vtable, int rank)
+mono_gc_get_managed_array_allocator (MonoClass *klass)
 {
 	return NULL;
 }
@@ -335,6 +335,13 @@ mono_gc_get_card_table (int *shift_bits, gpointer *card_mask)
 	return NULL;
 }
 
+gboolean
+mono_gc_card_table_nursery_check (void)
+{
+	g_assert_not_reached ();
+	return TRUE;
+}
+
 void*
 mono_gc_get_nursery (int *shift_bits, size_t *size)
 {
@@ -383,6 +390,30 @@ mono_gc_set_gc_callbacks (MonoGCCallbacks *callbacks)
 {
 }
 
+void
+mono_gc_set_stack_end (void *stack_end)
+{
+}
+
+int
+mono_gc_get_los_limit (void)
+{
+	return G_MAXINT;
+}
+
+gboolean
+mono_gc_user_markers_supported (void)
+{
+	return FALSE;
+}
+
+void *
+mono_gc_make_root_descr_user (MonoGCRootMarkFunc marker)
+{
+	g_assert_not_reached ();
+	return NULL;
+}
+
 #ifndef HOST_WIN32
 
 int
@@ -409,6 +440,9 @@ mono_gc_pthread_exit (void *retval)
 	pthread_exit (retval);
 }
 
+void mono_gc_set_skip_thread (gboolean value)
+{
+}
 #endif
 
 #ifdef HOST_WIN32
@@ -417,5 +451,22 @@ BOOL APIENTRY mono_gc_dllmain (HMODULE module_handle, DWORD reason, LPVOID reser
 	return TRUE;
 }
 #endif
+
+guint
+mono_gc_get_vtable_bits (MonoClass *class)
+{
+	return 0;
+}
+
+void
+mono_gc_register_altstack (gpointer stack, gint32 stack_size, gpointer altstack, gint32 altstack_size)
+{
+}
+
+gboolean
+mono_gc_set_allow_synchronous_major (gboolean flag)
+{
+	return TRUE;
+}
 
 #endif

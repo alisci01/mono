@@ -50,8 +50,11 @@ namespace System.IO
 	{
 		public static readonly Stream Null = new NullStream ();
 
+		[NonSerialized]
 		Func<byte[], int, int, int> async_read;
+		[NonSerialized]
 		Action<byte[], int, int> async_write;
+		[NonSerialized]
 		AutoResetEvent async_event;
 
 		protected Stream ()
@@ -150,7 +153,7 @@ namespace System.IO
 		{
 			byte[] buffer = new byte [1];
 
-			if (Read (buffer, 0, 1) == 1)
+			if (Read (buffer, 0, 1) > 0)
 				return buffer [0];
 			
 			return -1;
@@ -237,7 +240,7 @@ namespace System.IO
 			}
 		}
 
-#if MOONLIGHT || NET_4_0 || MOBILE
+#if NET_4_0
 		public void CopyTo (Stream destination)
 		{
 			CopyTo (destination, 16*1024);
@@ -280,7 +283,7 @@ namespace System.IO
 			return CopyToAsync (destination, bufferSize, CancellationToken.None);
 		}
 
-		public Task CopyToAsync (Stream destination, int bufferSize, CancellationToken cancellationToken)
+		public virtual Task CopyToAsync (Stream destination, int bufferSize, CancellationToken cancellationToken)
 		{
 			if (destination == null)
 				throw new ArgumentNullException ("destination");
@@ -300,7 +303,7 @@ namespace System.IO
 		async Task CopyToAsync (Stream destination, byte[] buffer, CancellationToken cancellationToken)
 		{
 			int nread;
-			while ((nread = await ReadAsync (buffer, 0, buffer.Length).ConfigureAwait (false)) != 0)
+			while ((nread = await ReadAsync (buffer, 0, buffer.Length, cancellationToken).ConfigureAwait (false)) != 0)
 				await destination.WriteAsync (buffer, 0, nread, cancellationToken).ConfigureAwait (false);
 		}
 

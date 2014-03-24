@@ -1,5 +1,3 @@
-// Compiler options: -langversion:future
-
 using System;
 using System.Threading.Tasks;
 using System.Threading;
@@ -342,6 +340,28 @@ class Tester : Base
 		return 0;
 	}
 	
+	async Task<int> BinaryTest_5 ()
+	{
+		var r1 = await Task.FromResult (1) == 9;
+		if (r1)
+			return 1;
+		
+		var r2 = 1 == await Task.FromResult (1);
+		if (!r2)
+			return 2;
+		
+		return 0;
+	}
+
+	async Task<bool> BinaryTest_6 ()
+	{
+		var t = Task.Delay (1);
+		if (t == await Task.WhenAny(new [] { t }))
+			return true;
+
+		return false;
+	}
+
 	async Task<int> CallTest_1 ()
 	{
 		return Call (
@@ -658,6 +678,12 @@ class Tester : Base
 		return a.Length == 13;
 	}
 	
+	async Task<bool> NewArrayInitTest_7 ()
+	{
+		var res = new [] { "a", new [] { "1", await Task.FromResult ("2") } [1], "b" };
+		return res [1] == "2";
+	}
+
 	async Task<bool> PropertyTest_1 ()
 	{
 		PropertyInt = await Task.Factory.StartNew (() => 6);

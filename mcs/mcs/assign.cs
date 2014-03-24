@@ -310,6 +310,12 @@ namespace Mono.CSharp {
 			}
 		}
 
+		public override Location StartLocation {
+			get {
+				return target.StartLocation;
+			}
+		}
+
 		public override bool ContainsEmitWithAwait ()
 		{
 			return target.ContainsEmitWithAwait () || source.ContainsEmitWithAwait ();
@@ -328,7 +334,7 @@ namespace Mono.CSharp {
 						
 			if (source == null) {
 				ok = false;
-				source = EmptyExpression.Null;
+				source = ErrorExpression.Instance;
 			}
 
 			target = target.ResolveLValue (ec, source);
@@ -343,7 +349,7 @@ namespace Mono.CSharp {
 			type = target_type;
 
 			if (!(target is IAssignMethod)) {
-				Error_ValueAssignment (ec, source);
+				target.Error_ValueAssignment (ec, source);
 				return null;
 			}
 
@@ -357,7 +363,7 @@ namespace Mono.CSharp {
 			return this;
 		}
 
-#if NET_4_0
+#if NET_4_0 || MOBILE_DYNAMIC
 		public override System.Linq.Expressions.Expression MakeExpression (BuilderContext ctx)
 		{
 			var tassign = target as IDynamicAssign;
@@ -411,6 +417,14 @@ namespace Mono.CSharp {
 			Emit (ec, true);
 		}
 
+		public override void FlowAnalysis (FlowAnalysisContext fc)
+		{
+			source.FlowAnalysis (fc);
+
+			if (target is ArrayAccess || target is IndexerExpr || target is PropertyExpr)
+				target.FlowAnalysis (fc);
+		}
+
 		protected override void CloneTo (CloneContext clonectx, Expression t)
 		{
 			Assign _target = (Assign) t;
@@ -459,6 +473,32 @@ namespace Mono.CSharp {
 
 			return this;
 		}
+
+		public override void FlowAnalysis (FlowAnalysisContext fc)
+		{
+			base.FlowAnalysis (fc);
+
+			var vr = target as VariableReference;
+			if (vr != null) {
+				if (vr.VariableInfo != null)
+					fc.SetVariableAssigned (vr.VariableInfo);
+
+				return;
+			}
+
+			var fe = target as FieldExpr;
+			if (fe != null) {
+				fe.SetFieldAssigned (fc);
+				return;
+			}
+		}
+
+		public override void MarkReachable (Reachability rc)
+		{
+			var es = source as ExpressionStatement;
+			if (es != null)
+				es.MarkReachable (rc);
+		}
 	}
 
 	public class RuntimeExplicitAssign : Assign
@@ -483,6 +523,10 @@ namespace Mono.CSharp {
 		public CompilerAssign (Expression target, Expression source, Location loc)
 			: base (target, source, loc)
 		{
+			if (target.Type != null) {
+				type = target.Type;
+				eclass = ExprClass.Value;
+			}
 		}
 
 		protected override Expression DoResolve (ResolveContext ec)
@@ -511,20 +555,21 @@ namespace Mono.CSharp {
 		// share same constructor (block) for expression trees resolve but
 		// they have they own resolve scope
 		//
-		sealed class FieldInitializerContext : ResolveContext
+		sealed class FieldInitializerContext : BlockContext
 		{
-			ExplicitBlock ctor_block;
+			readonly ExplicitBlock ctor_block;
 
-			public FieldInitializerContext (IMemberContext mc, ResolveContext constructorContext)
-				: base (mc, Options.FieldInitializerScope | Options.ConstructorScope)
+			public FieldInitializerContext (IMemberContext mc, BlockContext constructorContext)
+				: base (mc, null, constructorContext.ReturnType)
 			{
+				flags |= Options.FieldInitializerScope | Options.ConstructorScope;
 				this.ctor_block = constructorContext.CurrentBlock.Explicit;
 			}
 
 			public override ExplicitBlock ConstructorBlock {
-				get {
-					return ctor_block;
-				}
+			    get {
+			        return ctor_block;
+			    }
 			}
 		}
 
@@ -532,25 +577,41 @@ namespace Mono.CSharp {
 		// Keep resolved value because field initializers have their own rules
 		//
 		ExpressionStatement resolved;
-		IMemberContext mc;
+		FieldBase mc;
 
-		public FieldInitializer (FieldSpec spec, Expression expression, IMemberContext mc)
-			: base (new FieldExpr (spec, expression.Location), expression, expression.Location)
+		public FieldInitializer (FieldBase mc, Expression expression, Location loc)
+			: base (new FieldExpr (mc.Spec, expression.Location), expression, loc)
 		{
 			this.mc = mc;
-			if (!spec.IsStatic)
+			if (!mc.IsStatic)
 				((FieldExpr)target).InstanceExpression = new CompilerGeneratedThis (mc.CurrentType, expression.Location);
 		}
 
-		protected override Expression DoResolve (ResolveContext ec)
+		public int AssignmentOffset { get; private set; }
+
+		public FieldBase Field {
+			get {
+				return mc;
+			}
+		}
+
+		public override Location StartLocation {
+			get {
+				return loc;
+			}
+		}
+
+		protected override Expression DoResolve (ResolveContext rc)
 		{
 			// Field initializer can be resolved (fail) many times
 			if (source == null)
 				return null;
 
 			if (resolved == null) {
-				var ctx = new FieldInitializerContext (mc, ec);
+				var bc = (BlockContext) rc;
+				var ctx = new FieldInitializerContext (mc, bc);
 				resolved = base.DoResolve (ctx) as ExpressionStatement;
+				AssignmentOffset = ctx.AssignmentInfoOffset - bc.AssignmentInfoOffset;
 			}
 
 			return resolved;
@@ -560,11 +621,27 @@ namespace Mono.CSharp {
 		{
 			if (resolved == null)
 				return;
-			
+
+			//
+			// Emit sequence symbol info even if we are in compiler generated
+			// block to allow debugging field initializers when constructor is
+			// compiler generated
+			//
+			if (ec.HasSet (BuilderContext.Options.OmitDebugInfo) && ec.HasMethodSymbolBuilder) {
+				using (ec.With (BuilderContext.Options.OmitDebugInfo, false)) {
+					ec.Mark (loc);
+				}
+			}
+
 			if (resolved != this)
 				resolved.EmitStatement (ec);
 			else
 				base.EmitStatement (ec);
+		}
+
+		public override void FlowAnalysis (FlowAnalysisContext fc)
+		{
+			source.FlowAnalysis (fc);
 		}
 		
 		public bool IsDefaultInitializer {
@@ -634,15 +711,15 @@ namespace Mono.CSharp {
 		Expression right;
 		Expression left;
 
-		public CompoundAssign (Binary.Operator op, Expression target, Expression source, Location loc)
-			: base (target, source, loc)
+		public CompoundAssign (Binary.Operator op, Expression target, Expression source)
+			: base (target, source, target.Location)
 		{
 			right = source;
 			this.op = op;
 		}
 
-		public CompoundAssign (Binary.Operator op, Expression target, Expression source, Expression left, Location loc)
-			: this (op, target, source, loc)
+		public CompoundAssign (Binary.Operator op, Expression target, Expression source, Expression left)
+			: this (op, target, source)
 		{
 			this.left = left;
 		}
@@ -705,7 +782,7 @@ namespace Mono.CSharp {
 			if (left == null)
 				left = new TargetExpression (target);
 
-			source = new Binary (op, left, right, true, loc);
+			source = new Binary (op, left, right, true);
 
 			if (target is DynamicMemberAssignable) {
 				Arguments targs = ((DynamicMemberAssignable) target).Arguments;
@@ -753,6 +830,12 @@ namespace Mono.CSharp {
 			return base.DoResolve (ec);
 		}
 
+		public override void FlowAnalysis (FlowAnalysisContext fc)
+		{
+			target.FlowAnalysis (fc);
+			source.FlowAnalysis (fc);
+		}
+
 		protected override Expression ResolveConversions (ResolveContext ec)
 		{
 			//
@@ -777,8 +860,19 @@ namespace Mono.CSharp {
 			// Otherwise, if the selected operator is a predefined operator
 			//
 			Binary b = source as Binary;
-			if (b == null && source is ReducedExpression)
-				b = ((ReducedExpression) source).OriginalExpression as Binary;
+			if (b == null) {
+				if (source is ReducedExpression)
+					b = ((ReducedExpression) source).OriginalExpression as Binary;
+				else if (source is ReducedExpression.ReducedConstantExpression) {
+					b = ((ReducedExpression.ReducedConstantExpression) source).OriginalExpression as Binary;
+				} else if (source is Nullable.LiftedBinaryOperator) {
+					var po = ((Nullable.LiftedBinaryOperator) source);
+					if (po.UserOperator == null)
+						b = po.Binary;
+				} else if (source is TypeCast) {
+					b = ((TypeCast) source).Child as Binary;
+				}
+			}
 
 			if (b != null) {
 				//
@@ -800,7 +894,7 @@ namespace Mono.CSharp {
 				return new SimpleAssign (target, new DynamicConversion (target_type, CSharpBinderFlags.ConvertExplicit, arg, loc), loc).Resolve (ec);
 			}
 
-			right.Error_ValueCannotBeConverted (ec, loc, target_type, false);
+			right.Error_ValueCannotBeConverted (ec, target_type, false);
 			return null;
 		}
 

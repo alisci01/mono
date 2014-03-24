@@ -67,7 +67,7 @@ namespace Mono.CSharp {
 			}
 		}
 
-		public TypeParameter[] CurrentTypeParameters {
+		public TypeParameters CurrentTypeParameters {
 			get {
 				throw new NotImplementedException ();
 			}
@@ -129,7 +129,7 @@ namespace Mono.CSharp {
 		/// <summary>
 		///   The container for this PendingImplementation
 		/// </summary>
-		readonly TypeContainer container;
+		readonly TypeDefinition container;
 		
 		/// <summary>
 		///   This is the array of TypeAndMethods that describes the pending implementations
@@ -137,7 +137,7 @@ namespace Mono.CSharp {
 		/// </summary>
 		TypeAndMethods [] pending_implementations;
 
-		PendingImplementation (TypeContainer container, MissingInterfacesInfo[] missing_ifaces, MethodSpec[] abstract_methods, int total)
+		PendingImplementation (TypeDefinition container, MissingInterfacesInfo[] missing_ifaces, MethodSpec[] abstract_methods, int total)
 		{
 			var type_builder = container.Definition;
 			
@@ -189,20 +189,20 @@ namespace Mono.CSharp {
 
 		static readonly MissingInterfacesInfo [] EmptyMissingInterfacesInfo = new MissingInterfacesInfo [0];
 		
-		static MissingInterfacesInfo [] GetMissingInterfaces (TypeContainer container)
+		static MissingInterfacesInfo [] GetMissingInterfaces (TypeDefinition container)
 		{
 			//
-			// Notice that Interfaces will only return the interfaces that the Type
-			// is supposed to implement, not all the interfaces that the type implements.
+			// Interfaces will return all interfaces that the container
+			// implements including any inherited interfaces
 			//
 			var impl = container.Definition.Interfaces;
 
 			if (impl == null || impl.Count == 0)
 				return EmptyMissingInterfacesInfo;
 
-			MissingInterfacesInfo[] ret = new MissingInterfacesInfo[impl.Count];
+			var ret = new MissingInterfacesInfo[impl.Count];
 
-			for (int i = 0; i < impl.Count; i++)
+			for (int i = 0; i < ret.Length; i++)
 				ret [i] = new MissingInterfacesInfo (impl [i]);
 
 			// we really should not get here because Object doesnt implement any
@@ -233,7 +233,7 @@ namespace Mono.CSharp {
 		// Register method implementations are either abstract methods
 		// flagged as such on the base class or interface methods
 		//
-		static public PendingImplementation GetPendingImplementations (TypeContainer container)
+		static public PendingImplementation GetPendingImplementations (TypeDefinition container)
 		{
 			TypeSpec b = container.BaseType;
 
@@ -305,11 +305,10 @@ namespace Mono.CSharp {
 							//
 							// First check exact modifiers match
 							//
-							const Parameter.Modifier ref_out = Parameter.Modifier.REF | Parameter.Modifier.OUT;
-							if ((cp[pi].ModFlags & ref_out) == (tp[pi].ModFlags & ref_out))
+							if ((cp[pi].ModFlags & Parameter.Modifier.RefOutMask) == (tp[pi].ModFlags & Parameter.Modifier.RefOutMask))
 								continue;
 
-							if ((cp[pi].ModFlags & tp[pi].ModFlags & Parameter.Modifier.ISBYREF) != 0) {
+							if (((cp[pi].ModFlags | tp[pi].ModFlags) & Parameter.Modifier.RefOutMask) == Parameter.Modifier.RefOutMask) {
 								ref_only_difference = true;
 								continue;
 							}
@@ -443,7 +442,7 @@ namespace Mono.CSharp {
 						optional = tm.optional;
 					}
 
-					if (op == Operation.Lookup && name.Left != null && ambiguousCandidate == null) {
+					if (op == Operation.Lookup && name.ExplicitInterface != null && ambiguousCandidate == null) {
 						ambiguousCandidate = m;
 						continue;
 					}
@@ -508,7 +507,7 @@ namespace Mono.CSharp {
 			}
 
 			int top = param.Count;
-			var ec = new EmitContext (new ProxyMethodContext (container), proxy.GetILGenerator (), null);
+			var ec = new EmitContext (new ProxyMethodContext (container), proxy.GetILGenerator (), null, null);
 			ec.EmitThis ();
 			// TODO: GetAllParametersArguments
 			for (int i = 0; i < top; i++)
@@ -535,10 +534,14 @@ namespace Mono.CSharp {
 			// about mismatch at return type when the check bellow rejects them
 			//
 			var parameters = mi.Parameters;
+			MethodSpec close_match = null;
+
 			while (true) {
 				var candidates = MemberCache.FindMembers (base_type, mi.Name, false);
-				if (candidates == null)
+				if (candidates == null) {
+					base_method = close_match;
 					return false;
+				}
 
 				MethodSpec similar_candidate = null;
 				foreach (var candidate in candidates) {
@@ -549,7 +552,7 @@ namespace Mono.CSharp {
 						continue;
 
 					var candidate_param = ((MethodSpec) candidate).Parameters;
-					if (!TypeSpecComparer.Override.IsSame (parameters.Types, candidate_param.Types))
+					if (!TypeSpecComparer.Override.IsEqual (parameters.Types, candidate_param.Types))
 						continue;
 
 					bool modifiers_match = true;
@@ -557,8 +560,7 @@ namespace Mono.CSharp {
 						//
 						// First check exact ref/out match
 						//
-						const Parameter.Modifier ref_out = Parameter.Modifier.REF | Parameter.Modifier.OUT;
-						if ((parameters.FixedParameters[i].ModFlags & ref_out) == (candidate_param.FixedParameters[i].ModFlags & ref_out))
+						if ((parameters.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask) == (candidate_param.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask))
 							continue;
 
 						modifiers_match = false;
@@ -566,7 +568,7 @@ namespace Mono.CSharp {
 						//
 						// Different in ref/out only
 						//
-						if ((parameters.FixedParameters[i].ModFlags & candidate_param.FixedParameters[i].ModFlags & Parameter.Modifier.ISBYREF) != 0) {
+						if ((parameters.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask) != (candidate_param.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask)) {
 							if (similar_candidate == null) {
 								if (!candidate.IsPublic)
 									break;
@@ -589,22 +591,32 @@ namespace Mono.CSharp {
 						continue;
 
 					//
-					// From this point on the candidate is used for detailed error reporting
+					// From this point the candidate is used for detailed error reporting
 					// because it's very close match to what we are looking for
 					//
-					base_method = (MethodSpec) candidate;
+					var m = (MethodSpec) candidate;
 
-					if (!candidate.IsPublic)
-						return false;
+					if (!m.IsPublic) {
+						if (close_match == null)
+							close_match = m;
 
-					if (!TypeSpecComparer.Override.IsEqual (mi.ReturnType, base_method.ReturnType))
-						return false;
+						continue;
+					}
 
-					if (mi.IsGeneric && !Method.CheckImplementingMethodConstraints (container, base_method, mi)) {
+					if (!TypeSpecComparer.Override.IsEqual (mi.ReturnType, m.ReturnType)) {
+						if (close_match == null)
+							close_match = m;
+
+						continue;
+					}
+						
+					base_method = m;
+
+					if (mi.IsGeneric && !Method.CheckImplementingMethodConstraints (container, m, mi)) {
 						return true;
 					}
 				}
-
+				
 				if (base_method != null) {
 					if (similar_candidate != null) {
 						Report.SymbolRelatedToPreviousError (similar_candidate);
@@ -619,8 +631,10 @@ namespace Mono.CSharp {
 				}
 
 				base_type = candidates[0].DeclaringType.BaseType;
-				if (base_type == null)
+				if (base_type == null) {
+					base_method = close_match;
 					return false;
+				}
 			}
 
 			if (!base_method.IsVirtual) {
@@ -675,7 +689,7 @@ namespace Mono.CSharp {
 						if (pending_implementations [i].optional)
 							continue;
 
-						MethodSpec candidate = null;
+						MethodSpec candidate;
 						if (base_implements_type || BaseImplements (type, mi, out candidate))
 							continue;
 
@@ -694,7 +708,7 @@ namespace Mono.CSharp {
 									container.GetSignatureForError (), mi.GetSignatureForError (), candidate.GetSignatureForError ());
 							} else if ((candidate.Modifiers & Modifiers.PUBLIC) == 0) {
 								Report.Error (737, container.Location,
-									"`{0}' does not implement interface member `{1}' and the best implementing candidate `{2}' in not public",
+									"`{0}' does not implement interface member `{1}' and the best implementing candidate `{2}' is not public",
 									container.GetSignatureForError (), mi.GetSignatureForError (), candidate.GetSignatureForError ());
 							} else {
 								Report.Error (738, container.Location,

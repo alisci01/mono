@@ -54,9 +54,16 @@ namespace MonoTests.System.Net.Http.Headers
 
 			try {
 				new StringWithQualityHeaderValue ("s", 1.1);
-				Assert.Fail ("#2");
+				Assert.Fail ("#3");
 			} catch (ArgumentOutOfRangeException) {
 			}
+		}
+
+		[Test]
+		public void Ctor ()
+		{
+			var a = new StringWithQualityHeaderValue ("s", 0.123456);
+			Assert.AreEqual ("s; q=0.123", a.ToString ());
 		}
 
 		[Test]
@@ -66,6 +73,7 @@ namespace MonoTests.System.Net.Http.Headers
 			Assert.AreEqual (value, new StringWithQualityHeaderValue ("ab"), "#1");
 			Assert.AreEqual (value, new StringWithQualityHeaderValue ("AB"), "#2");
 			Assert.AreNotEqual (value, new StringWithQualityHeaderValue ("AA"), "#3");
+			Assert.AreEqual ("ab", value.ToString (), "#33");
 
 			value = new StringWithQualityHeaderValue ("ab", 1);
 			Assert.AreEqual (value, new StringWithQualityHeaderValue ("Ab", 1), "#4");
@@ -79,6 +87,17 @@ namespace MonoTests.System.Net.Http.Headers
 			var res = StringWithQualityHeaderValue.Parse ("c");
 			Assert.AreEqual ("c", res.Value, "#1");
 			Assert.IsNull (res.Quality, "#2");
+			Assert.AreEqual ("c", res.ToString (), "#3");
+
+			res = StringWithQualityHeaderValue.Parse (" * ;  q   = 0.2");
+			Assert.AreEqual ("*", res.Value, "#11");
+			Assert.AreEqual (0.2, res.Quality, "#12");
+			Assert.AreEqual ("*; q=0.2", res.ToString (), "#13");
+
+			res = StringWithQualityHeaderValue.Parse ("aa ;Q=0");
+			Assert.AreEqual ("aa", res.Value, "#21");
+			Assert.AreEqual (0, res.Quality, "#22");
+			Assert.AreEqual ("aa; q=0.0", res.ToString (), "#23");
 		}
 
 		[Test]
@@ -101,8 +120,37 @@ namespace MonoTests.System.Net.Http.Headers
 				Assert.Fail ("#3");
 			} catch (FormatException) {
 			}
-		}
 
+			try {
+				StringWithQualityHeaderValue.Parse ("b;");
+				Assert.Fail ("#4");
+			} catch (FormatException) {
+			}
+
+			try {
+				StringWithQualityHeaderValue.Parse ("b;q=");
+				Assert.Fail ("#5");
+			} catch (FormatException) {
+			}
+
+			try {
+				StringWithQualityHeaderValue.Parse ("b;q=2");
+				Assert.Fail ("#6");
+			} catch (FormatException) {
+			}
+
+			try {
+				StringWithQualityHeaderValue.Parse ("b;q=-0.2");
+				Assert.Fail ("#7");
+			} catch (FormatException) {
+			}
+
+			try {
+				StringWithQualityHeaderValue.Parse ("b;X=2");
+				Assert.Fail ("#8");
+			} catch (FormatException) {
+			}
+		}
 
 		[Test]
 		public void Properties ()

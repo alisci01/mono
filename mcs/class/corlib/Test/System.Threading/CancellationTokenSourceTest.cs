@@ -3,6 +3,7 @@
 //
 // Authors:
 //       Marek Safar (marek.safar@gmail.com)
+//       Jeremie Laval (jeremie.laval@gmail.com)
 //
 // Copyright 2011 Xamarin, Inc (http://www.xamarin.com)
 //
@@ -26,12 +27,13 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 
 using System;
 using System.Threading;
 using NUnit.Framework;
 using System.Threading.Tasks;
+using MonoTests.System.Threading.Tasks;
 
 namespace MonoTests.System.Threading
 {
@@ -128,6 +130,39 @@ namespace MonoTests.System.Threading
 			Assert.AreEqual (12, called, "#2");
 		}
 
+
+		[Test]
+		public void Cancel_Order ()
+		{
+			var cts = new CancellationTokenSource ();
+			var current = 0;
+			Action<object> a = x => { Assert.AreEqual(current, x); current++; };
+
+			cts.Token.Register (a, 2);
+			cts.Token.Register (a, 1);
+			cts.Token.Register (a, 0);
+			cts.Cancel ();
+		}
+
+
+		[Test]
+		public void CancelWithDispose ()
+		{
+			CancellationTokenSource cts = new CancellationTokenSource ();
+			CancellationToken c = cts.Token;
+			c.Register (() => {
+				cts.Dispose ();
+			});
+
+			int called = 0;
+			c.Register (() => {
+				called++;
+			});
+
+			cts.Cancel ();
+			Assert.AreEqual (1, called, "#1");
+		}
+
 		[Test]
 		public void Cancel_SingleException ()
 		{
@@ -169,6 +204,50 @@ namespace MonoTests.System.Threading
 			}
 
 			cts.Cancel ();
+		}
+
+		[Test]
+		public void Cancel_ExceptionOrder ()
+		{
+			var cts = new CancellationTokenSource ();
+
+			cts.Token.Register (() => { throw new ApplicationException ("1"); });
+			cts.Token.Register (() => { throw new ApplicationException ("2"); });
+			cts.Token.Register (() => { throw new ApplicationException ("3"); });
+
+			try {
+				cts.Cancel ();
+			} catch (AggregateException e) {
+				Assert.AreEqual (3, e.InnerExceptions.Count, "#2");
+				Assert.AreEqual ("3", e.InnerExceptions[0].Message, "#3");
+				Assert.AreEqual ("2", e.InnerExceptions[1].Message, "#4");
+				Assert.AreEqual ("1", e.InnerExceptions[2].Message, "#5");
+			}
+		}
+
+		[Test]
+		public void Cancel_MultipleException_Recursive ()
+		{
+			CancellationTokenSource cts = new CancellationTokenSource ();
+			CancellationToken c = cts.Token;
+			c.Register (() => {
+				cts.Cancel ();
+			});
+
+			c.Register (() => {
+				throw new ApplicationException ();
+			});
+
+			c.Register (() => {
+				throw new NotSupportedException ();
+			});
+
+			try {
+				cts.Cancel (false);
+				Assert.Fail ("#1");
+			} catch (AggregateException e) {
+				Assert.AreEqual (2, e.InnerExceptions.Count, "#2");
+			}
 		}
 
 		[Test]
@@ -320,6 +399,94 @@ namespace MonoTests.System.Threading
 			Assert.IsTrue (t.Wait (1000), "#3");
 			Assert.AreEqual (12, called, "#4");
 		}
+
+		[Test]
+		public void ReEntrantRegistrationTest ()
+		{
+			bool unregister = false;
+			bool register = false;
+			var source = new CancellationTokenSource ();
+			var token = source.Token;
+
+			Console.WriteLine ("Test1");
+			var reg = token.Register (() => unregister = true);
+			token.Register (() => reg.Dispose ());
+			token.Register (() => { Console.WriteLine ("Gnyah"); token.Register (() => register = true); });
+			source.Cancel ();
+
+			Assert.IsFalse (unregister);
+			Assert.IsTrue (register);
+		}
+
+		[Test]
+		public void DisposeAfterRegistrationTest ()
+		{
+			var source = new CancellationTokenSource ();
+			bool ran = false;
+			var req = source.Token.Register (() => ran = true);
+			source.Dispose ();
+			req.Dispose ();
+			Assert.IsFalse (ran);
+		}
+
+		[Test]
+		public void CancelLinkedTokenSource ()
+		{
+			var cts = new CancellationTokenSource ();
+			bool canceled = false;
+			cts.Token.Register (() => canceled = true);
+
+			using (var linked = CancellationTokenSource.CreateLinkedTokenSource (cts.Token))
+				;
+
+			Assert.IsFalse (canceled, "#1");
+			Assert.IsFalse (cts.IsCancellationRequested, "#2");
+
+			cts.Cancel ();
+
+			Assert.IsTrue (canceled, "#3");
+		}
+
+		[Test]
+		public void ConcurrentCancelLinkedTokenSourceWhileDisposing ()
+		{
+			ParallelTestHelper.Repeat (delegate {
+				var src = new CancellationTokenSource ();
+				var linked = CancellationTokenSource.CreateLinkedTokenSource (src.Token);
+				var cntd = new CountdownEvent (2);
+
+				var t1 = new Thread (() => {
+					if (!cntd.Signal ())
+						cntd.Wait (200);
+					src.Cancel ();
+				});
+				var t2 = new Thread (() => {
+					if (!cntd.Signal ())
+						cntd.Wait (200);
+					linked.Dispose ();
+				});
+
+				t1.Start ();
+				t2.Start ();
+				t1.Join (500);
+				t2.Join (500);
+			}, 500);
+		}
+
+#if NET_4_5
+		[Test]
+		public void DisposeRace ()
+		{
+			for (int i = 0; i < 1000; ++i) {
+				var c1 = new CancellationTokenSource ();
+				using (c1) {
+					var wh = c1.Token.WaitHandle;
+					c1.CancelAfter (1);
+					Thread.Sleep (1);
+				}
+			}
+		}
+#endif
 	}
 }
 

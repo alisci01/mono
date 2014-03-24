@@ -83,7 +83,7 @@ namespace Mono.CSharp
 		{
 			// It can be used more than once when importing same assembly
 			// into 2 or more global aliases
-			var definition = GetAssemblyDefinition (assembly);
+		GetAssemblyDefinition (assembly);
 
 			//
 			// This part tries to simulate loading of top-level
@@ -98,7 +98,7 @@ namespace Mono.CSharp
 				all_types = e.Types;
 			}
 
-			ImportTypes (all_types, targetNamespace, definition.HasExtensionMethod);
+			ImportTypes (all_types, targetNamespace, true);
 		}
 
 		public ImportedModuleDefinition ImportModule (Module module, RootNamespace targetNamespace)
@@ -166,8 +166,11 @@ namespace Mono.CSharp
 	{
 		[System.Runtime.InteropServices.FieldOffset (0)]
 		int i;
+
+#pragma warning disable 414
 		[System.Runtime.InteropServices.FieldOffset (0)]
 		float f;
+#pragma warning restore 414
 
 		public static int SingleToInt32Bits (float v)
 		{
@@ -216,7 +219,7 @@ namespace Mono.CSharp
 		//
 		public bool Create (AppDomain domain, AssemblyBuilderAccess access)
 		{
-#if STATIC
+#if STATIC || FULL_AOT_RUNTIME
 			throw new NotSupportedException ();
 #else
 			ResolveAssemblySecurityAttributes ();

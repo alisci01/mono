@@ -19,7 +19,7 @@ struct _tp_poll_data {
 typedef struct _tp_poll_data tp_poll_data;
 
 static void tp_poll_shutdown (gpointer event_data);
-static void tp_poll_modify (gpointer event_data, int fd, int operation, int events, gboolean is_new);
+static void tp_poll_modify (gpointer p, int fd, int operation, int events, gboolean is_new);
 static void tp_poll_wait (gpointer p);
 
 static gpointer
@@ -74,18 +74,25 @@ tp_poll_init (SocketIOData *data)
 }
 
 static void
-tp_poll_modify (gpointer event_data, int fd, int operation, int events, gboolean is_new)
+tp_poll_modify (gpointer p, int fd, int operation, int events, gboolean is_new)
 {
-	tp_poll_data *data = event_data;
+	SocketIOData *socket_io_data;
+	tp_poll_data *data;
 	char msg [1];
+	int unused;
 
+	socket_io_data = p;
+	data = socket_io_data->event_data;
+
+	LeaveCriticalSection (&socket_io_data->io_lock);
+	
 	MONO_SEM_WAIT (&data->new_sem);
 	INIT_POLLFD (&data->newpfd, GPOINTER_TO_INT (fd), events);
 	*msg = (char) operation;
 #ifndef HOST_WIN32
-	if (write (data->pipe [1], msg, 1));
+	unused = write (data->pipe [1], msg, 1);
 #else
-	send ((SOCKET) data->pipe [1], msg, 1, 0);
+	unused = send ((SOCKET) data->pipe [1], msg, 1, 0);
 #endif
 }
 
@@ -149,13 +156,10 @@ tp_poll_wait (gpointer p)
 	gint maxfd = 1;
 	gint allocated;
 	gint i;
-	MonoInternalThread *thread;
 	tp_poll_data *data;
 	SocketIOData *socket_io_data = p;
 	MonoPtrArray async_results;
 	gint nresults;
-
-	thread = mono_thread_internal_current ();
 
 	data = socket_io_data->event_data;
 	allocated = INITIAL_POLLFD_SIZE;
@@ -172,14 +176,17 @@ tp_poll_wait (gpointer p)
 		MonoMList *list;
 		MonoObject *ares;
 
+		mono_gc_set_skip_thread (TRUE);
+
 		do {
 			if (nsock == -1) {
-				if (THREAD_WANTS_A_BREAK (thread))
-					mono_thread_interruption_checkpoint ();
+				check_for_interruption_critical ();
 			}
 
 			nsock = mono_poll (pfds, maxfd, -1);
 		} while (nsock == -1 && errno == EINTR);
+
+		mono_gc_set_skip_thread (FALSE);
 
 		/* 
 		 * Apart from EINTR, we only check EBADF, for the rest:
@@ -211,11 +218,22 @@ tp_poll_wait (gpointer p)
 		/* Got a new socket */
 		if ((pfds->revents & MONO_POLLIN) != 0) {
 			int nread;
+			gboolean found = FALSE;
 
 			for (i = 1; i < allocated; i++) {
 				pfd = &pfds [i];
-				if (pfd->fd == -1 || pfd->fd == data->newpfd.fd)
+				if (pfd->fd == data->newpfd.fd) {
+					found = TRUE;
 					break;
+				}
+			}
+
+			if (!found) {
+				for (i = 1; i < allocated; i++) {
+					pfd = &pfds [i];
+					if (pfd->fd == -1)
+						break;
+				}
 			}
 
 			if (i == allocated) {

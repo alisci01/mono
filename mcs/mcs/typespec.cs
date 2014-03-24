@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Linq;
 
 #if STATIC
 using MetaType = IKVM.Reflection.Type;
@@ -23,6 +24,9 @@ using System.Reflection;
 
 namespace Mono.CSharp
 {
+	//
+	// Inflated or non-inflated representation of any type. 
+	//
 	public class TypeSpec : MemberSpec
 	{
 		protected MetaType info;
@@ -88,8 +92,26 @@ namespace Mono.CSharp
 			}
 		}
 
+		//
+		// Returns a list of all interfaces including
+		// interfaces from base type or base interfaces
+		//
 		public virtual IList<TypeSpec> Interfaces {
 			get {
+				if ((state & StateFlags.InterfacesImported) == 0) {
+					state |= StateFlags.InterfacesImported;
+
+					//
+					// Delay interfaces expansion to save memory and once all
+					// base types has been imported to avoid problems where
+					// interface references type before its base was imported
+					//
+					var imported = MemberDefinition as ImportedTypeDefinition;
+					if (imported != null && Kind != MemberKind.MissingType)
+						imported.DefineInterfaces (this);
+
+				}
+
 				return ifaces;
 			}
 			set {
@@ -189,7 +211,7 @@ namespace Mono.CSharp
 		//
 		// Returns true for instances of IList<T>, IEnumerable<T>, ICollection<T>
 		//
-		public virtual bool IsGenericIterateInterface {
+		public virtual bool IsArrayGenericInterface {
 			get {
 				return false;
 			}
@@ -292,12 +314,15 @@ namespace Mono.CSharp
 				if (IsPointer)
 					return ((ElementTypeSpec) this).Element.IsUnmanaged;
 
-				var ds = MemberDefinition as DeclSpace;
+				var ds = MemberDefinition as TypeDefinition;
 				if (ds != null)
 					return ds.IsUnmanagedType ();
 
 				if (Kind == MemberKind.Void)
 					return true;
+
+				if (Kind == MemberKind.TypeParameter)
+					return false;
 
 				if (IsNested && DeclaringType.IsGenericOrParentIsGeneric)
 					return false;
@@ -306,6 +331,9 @@ namespace Mono.CSharp
 			}
 		}
 
+		//
+		// A cache of all type members (including nested types)
+		//
 		public MemberCache MemberCache {
 			get {
 				if (cache == null || (state & StateFlags.PendingMemberCacheMembers) != 0)
@@ -344,13 +372,13 @@ namespace Mono.CSharp
 
 		#endregion
 
-		public bool AddInterface (TypeSpec iface)
+		public virtual bool AddInterface (TypeSpec iface)
 		{
 			if ((state & StateFlags.InterfacesExpanded) != 0)
 				throw new InternalErrorException ("Modifying expanded interface list");
 
 			if (ifaces == null) {
-				ifaces = new List<TypeSpec> () { iface };
+				ifaces = new List<TypeSpec> { iface };
 				return true;
 			}
 
@@ -379,11 +407,16 @@ namespace Mono.CSharp
 			// When resolving base class of X`1 we inflate context type A`1
 			// All this happens before we even hit IFoo resolve. Without
 			// additional expansion any inside usage of A<T> would miss IFoo
-			// interface because it comes from early inflated TypeSpec
+			// interface because it comes from early inflated A`1 definition.
 			//
 			if (inflated_instances != null) {
-				foreach (var inflated in inflated_instances) {
-					inflated.Value.AddInterface (iface);
+				//
+				// Inflate only existing instances not any new instances added
+				// during AddInterface
+				//
+				var inflated_existing = inflated_instances.Values.ToArray ();
+				foreach (var inflated in inflated_existing) {
+					inflated.AddInterface (iface);
 				}
 			}
 
@@ -435,6 +468,9 @@ namespace Mono.CSharp
 			return aua;
 		}
 
+		//
+		// Return metadata information used during emit to describe the type
+		//
 		public virtual MetaType GetMetaInfo ()
 		{
 			return info;
@@ -445,6 +481,9 @@ namespace Mono.CSharp
 			return this;
 		}
 
+		//
+		// Text representation of type used by documentation writer
+		//
 		public override string GetSignatureForDocumentation ()
 		{
 			StringBuilder sb = new StringBuilder ();
@@ -537,22 +576,16 @@ namespace Mono.CSharp
 
 		public bool ImplementsInterface (TypeSpec iface, bool variantly)
 		{
-			var t = this;
-			do {
-				var ifaces = t.Interfaces;
-				if (ifaces != null) {
-					for (int i = 0; i < ifaces.Count; ++i) {
-						if (TypeSpecComparer.IsEqual (ifaces[i], iface))
-							return true;
+			var ifaces = Interfaces;
+			if (ifaces != null) {
+				for (int i = 0; i < ifaces.Count; ++i) {
+					if (TypeSpecComparer.IsEqual (ifaces[i], iface))
+						return true;
 
-						if (variantly && TypeSpecComparer.Variant.IsEqual (ifaces[i], iface))
-							return true;
-					}
+					if (variantly && TypeSpecComparer.Variant.IsEqual (ifaces[i], iface))
+						return true;
 				}
-
-				// TODO: Why is it needed when we do it during import
-				t = t.BaseType;
-			} while (t != null);
+			}
 
 			return false;
 		}
@@ -623,6 +656,20 @@ namespace Mono.CSharp
 			}
 		}
 
+		public static bool IsNonNullableValueType (TypeSpec t)
+		{
+			switch (t.Kind) {
+			case MemberKind.TypeParameter:
+				return ((TypeParameterSpec) t).IsValueType;
+			case MemberKind.Struct:
+				return !t.IsNullableType;
+			case MemberKind.Enum:
+				return true;
+			default:
+				return false;
+			}
+		}
+
 		public static bool IsValueType (TypeSpec t)
 		{
 			switch (t.Kind) {
@@ -651,6 +698,9 @@ namespace Mono.CSharp
 			return new InflatedTypeSpec (inflator.Context, this, inflator.TypeInstance, targs);
 		}
 
+		//
+		// Inflates current type using specific type arguments
+		//
 		public InflatedTypeSpec MakeGenericType (IModuleContext context, TypeSpec[] targs)
 		{
 			if (targs.Length == 0 && !IsNested)
@@ -691,22 +741,22 @@ namespace Mono.CSharp
 			return this;
 		}
 
-		public override List<TypeSpec> ResolveMissingDependencies ()
+		public override List<MissingTypeSpecReference> ResolveMissingDependencies (MemberSpec caller)
 		{
-			List<TypeSpec> missing = null;
+			List<MissingTypeSpecReference> missing = null;
 
 			if (Kind == MemberKind.MissingType) {
-				missing = new List<TypeSpec> ();
-				missing.Add (this);
+				missing = new List<MissingTypeSpecReference> ();
+				missing.Add (new MissingTypeSpecReference (this, caller));
 				return missing;
 			}
 
 			foreach (var targ in TypeArguments) {
 				if (targ.Kind == MemberKind.MissingType) {
 					if (missing == null)
-						missing = new List<TypeSpec> ();
+						missing = new List<MissingTypeSpecReference> ();
 
-					missing.Add (targ);
+					missing.Add (new MissingTypeSpecReference (targ, caller));
 				}
 			}
 
@@ -714,9 +764,21 @@ namespace Mono.CSharp
 				foreach (var iface in Interfaces) {
 					if (iface.Kind == MemberKind.MissingType) {
 						if (missing == null)
-							missing = new List<TypeSpec> ();
+							missing = new List<MissingTypeSpecReference> ();
 
-						missing.Add (iface);
+						missing.Add (new MissingTypeSpecReference (iface, caller));
+					}
+				}
+			}
+
+			if (MemberDefinition.TypeParametersCount > 0) {
+				foreach (var tp in MemberDefinition.TypeParameters) {
+					var tp_missing = tp.GetMissingDependencies (this);
+					if (tp_missing != null) {
+						if (missing == null)
+							missing = new List<MissingTypeSpecReference> ();
+
+						missing.AddRange (tp_missing);
 					}
 				}
 			}
@@ -724,7 +786,7 @@ namespace Mono.CSharp
 			if (missing != null || BaseType == null)
 				return missing;
 
-			return BaseType.ResolveMissingDependencies ();
+			return BaseType.ResolveMissingDependencies (this);
 		}
 
 		public void SetMetaInfo (MetaType info)
@@ -739,8 +801,37 @@ namespace Mono.CSharp
 		{
 			modifiers |= Modifiers.METHOD_EXTENSION;
 		}
+
+		public void UpdateInflatedInstancesBaseType ()
+		{
+			//
+			// When nested class has a partial part the situation where parent type
+			// is inflated before its base type is defined can occur. In such case
+			// all inflated (should be only 1) instansted need to be updated
+			//
+			// partial class A<T> {
+			//   partial class B : A<int> { }
+			// }
+			//
+			// partial class A<T> : X {}
+			//
+			if (inflated_instances == null)
+				return;
+
+			foreach (var inflated in inflated_instances) {
+				//
+				// Don't need to inflate possible generic type because for now the method
+				// is always used from within the nested type
+				//
+				inflated.Value.BaseType = base_type;
+			}
+		}
 	}
 
+	//
+	// Special version used for types which must exist in corlib or
+	// the compiler cannot work
+	//
 	public sealed class BuiltinTypeSpec : TypeSpec
 	{
 		public enum Type
@@ -922,6 +1013,9 @@ namespace Mono.CSharp
 		}
 	}
 
+	//
+	// Various type comparers used by compiler
+	//
 	static class TypeSpecComparer
 	{
 		//
@@ -1022,6 +1116,23 @@ namespace Mono.CSharp
 				return true;
 			}
 
+			public static bool IsEqual (TypeSpec[] a, TypeSpec[] b)
+			{
+				if (a == b)
+					return true;
+
+				if (a.Length != b.Length)
+					return false;
+
+				for (int i = 0; i < a.Length; ++i) {
+					if (!IsEqual (a[i], b[i]))
+						return false;
+				}
+
+				return true;
+			}
+
+
 			//
 			// Compares unordered arrays
 			//
@@ -1061,8 +1172,7 @@ namespace Mono.CSharp
 					if (!IsEqual (a.Types[i], b.Types[i]))
 						return false;
 
-					const Parameter.Modifier ref_out = Parameter.Modifier.REF | Parameter.Modifier.OUT;
-					if ((a.FixedParameters[i].ModFlags & ref_out) != (b.FixedParameters[i].ModFlags & ref_out))
+					if ((a.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask) != (b.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask))
 						return false;
 				}
 
@@ -1142,6 +1252,9 @@ namespace Mono.CSharp
 					if (!MayBecomeEqualGenericTypes (ta[i], tb[i]))
 						return false;
 				}
+
+				if (a.IsNested && b.IsNested)
+					return IsEqual (a.DeclaringType, b.DeclaringType);
 
 				return true;
 			}
@@ -1303,6 +1416,10 @@ namespace Mono.CSharp
 	{
 		IAssemblyDefinition DeclaringAssembly { get; }
 		string Namespace { get; }
+		bool IsPartial { get; }
+		bool IsComImport { get; }
+		bool IsTypeForwarder { get; }
+		bool IsCyclicTypeForwarder { get; }
 		int TypeParametersCount { get; }
 		TypeParameterSpec[] TypeParameters { get; }
 
@@ -1325,12 +1442,6 @@ namespace Mono.CSharp
 
 		readonly string name;
 
-		InternalType (string name, MemberCache cache)
-			: this (name)
-		{
-			this.cache = cache;
-		}
-
 		InternalType (string name)
 			: base (MemberKind.InternalCompilerType, null, null, null, Modifiers.PUBLIC)
 		{
@@ -1339,7 +1450,7 @@ namespace Mono.CSharp
 			cache = MemberCache.Empty;
 
 			// Make all internal types CLS-compliant, non-obsolete
-			state = (state & ~(StateFlags.CLSCompliant_Undetected | StateFlags.Obsolete_Undetected)) | StateFlags.CLSCompliant;
+			state = (state & ~(StateFlags.CLSCompliant_Undetected | StateFlags.Obsolete_Undetected | StateFlags.MissingDependency_Undetected)) | StateFlags.CLSCompliant;
 		}
 
 		#region Properties
@@ -1356,7 +1467,31 @@ namespace Mono.CSharp
 			}
 		}
 
+		bool ITypeDefinition.IsComImport {
+			get {
+				return false;
+			}
+		}
+
 		bool IMemberDefinition.IsImported {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsPartial {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsTypeForwarder {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsCyclicTypeForwarder {
 			get {
 				return false;
 			}
@@ -1447,6 +1582,9 @@ namespace Mono.CSharp
 		#endregion
 	}
 
+	//
+	// Common base class for composite types
+	//
 	public abstract class ElementTypeSpec : TypeSpec, ITypeDefinition
 	{
 		protected ElementTypeSpec (MemberKind kind, TypeSpec element, MetaType info)
@@ -1454,11 +1592,8 @@ namespace Mono.CSharp
 		{
 			this.Element = element;
 
-			// Some flags can be copied directly from the element
-			const StateFlags shared_flags = StateFlags.CLSCompliant | StateFlags.CLSCompliant_Undetected
-				| StateFlags.Obsolete | StateFlags.Obsolete_Undetected | StateFlags.HasDynamicElement;
-			state &= ~shared_flags;
-			state |= (element.state & shared_flags);
+			state &= ~SharedStateFlags;
+			state |= (element.state & SharedStateFlags);
 
 			if (element.BuiltinType == BuiltinTypeSpec.Type.Dynamic)
 				state |= StateFlags.HasDynamicElement;
@@ -1473,6 +1608,30 @@ namespace Mono.CSharp
 		#region Properties
 
 		public TypeSpec Element { get; private set; }
+
+		bool ITypeDefinition.IsComImport {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsPartial {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsTypeForwarder {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsCyclicTypeForwarder {
+			get {
+				return false;
+			}
+		}
 
 		public override string Name {
 			get {
@@ -1762,9 +1921,9 @@ namespace Mono.CSharp
 			ArrayContainer ac;
 			var key = new TypeRankPair (element, rank);
 			if (!module.ArrayTypesCache.TryGetValue (key, out ac)) {
-				ac = new ArrayContainer (module, element, rank) {
-					BaseType = module.Compiler.BuiltinTypes.Array
-				};
+				ac = new ArrayContainer (module, element, rank);
+				ac.BaseType = module.Compiler.BuiltinTypes.Array;
+				ac.Interfaces = ac.BaseType.Interfaces;
 
 				module.ArrayTypesCache.Add (key, ac);
 			}
@@ -1834,5 +1993,17 @@ namespace Mono.CSharp
 
 			return pc;
 		}
+	}
+
+	public class MissingTypeSpecReference
+	{
+		public MissingTypeSpecReference (TypeSpec type, MemberSpec caller)
+		{
+			Type = type;
+			Caller = caller;
+		}
+
+		public TypeSpec Type { get; private set; }
+		public MemberSpec Caller { get; private set; }
 	}
 }

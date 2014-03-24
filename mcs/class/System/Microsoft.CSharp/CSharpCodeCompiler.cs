@@ -78,7 +78,7 @@ namespace Mono.CSharp
 				if (!File.Exists (windowsMonoPath))
 					throw new FileNotFoundException ("Windows mono path not found: " + windowsMonoPath);
 
-				windowsMcsPath = Path.Combine (p, "4.0\\mcs.exe");
+				windowsMcsPath = Path.Combine (p, "4.5\\mcs.exe");
 				if (!File.Exists (windowsMcsPath))
 					windowsMcsPath = Path.Combine(Path.GetDirectoryName (p), "lib\\build\\mcs.exe");
 				
@@ -281,7 +281,7 @@ namespace Mono.CSharp
 					using (FileStream fs = File.OpenRead(options.OutputAssembly)) {
 						byte[] buffer = new byte[fs.Length];
 						fs.Read(buffer, 0, buffer.Length);
-						results.CompiledAssembly = Assembly.Load(buffer, null, options.Evidence);
+						results.CompiledAssembly = Assembly.Load(buffer, null);
 						fs.Close();
 					}
 				} else {
@@ -381,8 +381,10 @@ namespace Mono.CSharp
 						break;
 				}
 			}
-			
-#if NET_4_0
+
+#if NET_4_5			
+			args.Append("/sdk:4.5");
+#elif NET_4_0
 			args.Append("/sdk:4");
 #else
 			args.Append("/sdk:2");
@@ -393,6 +395,20 @@ namespace Mono.CSharp
 				args.AppendFormat("\"{0}\" ",source);
 			return args.ToString();
 		}
+
+		// Keep in sync with mcs/class/Microsoft.Build.Utilities/Microsoft.Build.Utilities/ToolTask.cs
+		const string ErrorRegexPattern = @"
+			^
+			(\s*(?<file>[^\(]+)                         # filename (optional)
+			 (\((?<line>\d*)(,(?<column>\d*[\+]*))?\))? # line+column (optional)
+			 :\s+)?
+			(?<level>\w+)                               # error|warning
+			\s+
+			(?<number>[^:]*\d)                          # CS1234
+			:
+			\s*
+			(?<message>.*)$";
+
 		private static CompilerError CreateErrorFromString(string error_string)
 		{
 			if (error_string.StartsWith ("BETA"))
@@ -402,8 +418,7 @@ namespace Mono.CSharp
 				return null;
 
 			CompilerError error=new CompilerError();
-			Regex reg = new Regex (@"^(\s*(?<file>.*)\((?<line>\d*)(,(?<column>\d*))?\)(:)?\s+)*(?<level>\w+)\s*(?<number>.*):\s(?<message>.*)",
-				RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+			Regex reg = new Regex (ErrorRegexPattern, RegexOptions.Compiled | RegexOptions.ExplicitCapture | RegexOptions.IgnorePatternWhitespace);
 			Match match=reg.Match(error_string);
 			if (!match.Success) {
 				// We had some sort of runtime crash

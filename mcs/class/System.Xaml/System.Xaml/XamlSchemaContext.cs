@@ -94,11 +94,7 @@ namespace System.Xaml
 		}
 
 		IEnumerable<Assembly> AssembliesInScope {
-#if MOONLIGHT
-			get { return reference_assemblies; }
-#else
 			get { return reference_assemblies ?? AppDomain.CurrentDomain.GetAssemblies (); }
-#endif
 		}
 
 		public bool SupportMarkupExtensionsWithDuplicateArity { get; private set; }
@@ -244,11 +240,7 @@ namespace System.Xaml
 
 		protected internal virtual Assembly OnAssemblyResolve (string assemblyName)
 		{
-#if MOONLIGHT
-			return Assembly.Load (assemblyName);
-#else
 			return Assembly.LoadWithPartialName (assemblyName);
-#endif
 		}
 
 		public virtual bool TryGetCompatibleXamlNamespace (string xamlNamespace, out string compatibleNamespace)
@@ -336,7 +328,6 @@ namespace System.Xaml
 
 			Type [] genArgs = null;
 			if (typeArguments != null && typeArguments.Count > 0) {
-				var xtns = typeArguments;
 				genArgs = (from t in typeArguments select t.UnderlyingType).ToArray ();
 				if (genArgs.Any (t => t == null))
 					return null;

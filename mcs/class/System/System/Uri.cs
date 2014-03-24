@@ -91,10 +91,13 @@ namespace System {
 		private string cachedLocalPath;
 		private int cachedHashCode;
 
+#if BOOTSTRAP_BASIC
 		private static readonly string hexUpperChars = "0123456789ABCDEF";
 		private static readonly string [] Empty = new string [0];
 		private static bool isWin32 = (Path.DirectorySeparatorChar == '\\');
-
+#else
+		static readonly char[] hexUpperChars = new [] { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+#endif
 	
 		// Fields
 		
@@ -109,18 +112,27 @@ namespace System {
 		public static readonly string UriSchemeNntp = "nntp";
 		public static readonly string UriSchemeNetPipe = "net.pipe";
 		public static readonly string UriSchemeNetTcp = "net.tcp";
+		
+		private static readonly string [] knownUriSchemes =
+		{
+			UriSchemeFile,
+			UriSchemeFtp,
+			UriSchemeGopher,
+			UriSchemeHttp,
+			UriSchemeHttps,
+			UriSchemeMailto,
+			UriSchemeNews,
+			UriSchemeNntp,
+			UriSchemeNetPipe,
+			UriSchemeNetTcp
+		};
 
 		// Constructors		
 
-#if MOONLIGHT
-		public Uri (string uriString) : this (uriString, UriKind.Absolute) 
-		{
-		}
-#else
 		public Uri (string uriString) : this (uriString, false) 
 		{
 		}
-#endif
+
 		protected Uri (SerializationInfo serializationInfo, StreamingContext streamingContext)
 		{
 			string uri = serializationInfo.GetString ("AbsoluteUri");
@@ -201,6 +213,9 @@ namespace System {
 					success = false;
 					break;
 				}
+
+				if (success && isAbsoluteUri && (path.Length > 0))
+					path = EscapeString (path);
 			}
 		}
 
@@ -326,7 +341,7 @@ namespace System {
 				query = relativeUri.Substring (pos);
 				if (!userEscaped)
 					query = EscapeString (query);
-#if !NET_4_0 && !MOONLIGHT && !MOBILE
+#if !NET_4_0 && !MOBILE
 				consider_query = query.Length > 0;
 #endif
 				relativeUri = pos == 0 ? String.Empty : relativeUri.Substring (0, pos);
@@ -635,7 +650,11 @@ namespace System {
 
 				// return a (pre-allocated) empty array
 				if (path.Length == 0)
+#if BOOTSTRAP_BASIC
 					return Empty;
+#else
+					return EmptyArray<string>.Value;
+#endif
 				// do not return the original array (since items can be changed)
 				if (segments != null)
 					return segments.ToArray ();
@@ -704,12 +723,7 @@ namespace System {
 			}
 		}
 
-#if NET_2_0
-		public
-#else
-		internal
-#endif
-		bool IsAbsoluteUri {
+		public bool IsAbsoluteUri {
 			get { return isAbsoluteUri; }
 		}
 
@@ -778,6 +792,7 @@ namespace System {
 					if (i + 1 < len && name [i + 1] == '.')
 						return false;
 					count = 0;
+					continue;
 				} else if (!Char.IsLetterOrDigit (c) && c != '-' && c != '_') {
 					return false;
 				}
@@ -1006,7 +1021,7 @@ namespace System {
 		//
 		public Uri MakeRelativeUri (Uri uri)
 		{
-#if NET_4_0 || MOONLIGHT || MOBILE
+#if NET_4_0
 			if (uri == null)
 				throw new ArgumentNullException ("uri");
 #endif
@@ -1024,11 +1039,13 @@ namespace System {
 					if (segments [k] != segments2 [k]) 
 						break;
 				
-				for (int i = k + 1; i < segments.Length; i++)
+				for (int i = k; i < segments.Length && segments [i].EndsWith ("/"); i++)
 					result += "../";
 				for (int i = k; i < segments2.Length; i++)
 					result += segments2 [i];
 				
+				if (result == string.Empty)
+					result = "./";
 			}
 			uri.AppendQueryAndFragment (ref result);
 
@@ -1113,12 +1130,8 @@ namespace System {
 			path = EscapeString (path);
 		}
 
-#if MOONLIGHT
-		static string EscapeString (string str)
-#else
 		[Obsolete]
 		protected static string EscapeString (string str) 
-#endif
 		{
 			return EscapeString (str, Uri.EscapeCommonHexBrackets);
 		}
@@ -1214,12 +1227,8 @@ namespace System {
 				path = EscapeString (path);
 		}
 
-#if MOONLIGHT
-		string Unescape (string path)
-#else
 		[Obsolete]
 		protected virtual string Unescape (string path)
-#endif
 		{
 			return Unescape (path, false, false);
 		}
@@ -1382,12 +1391,8 @@ namespace System {
 			if (uriString [0] == '/' && Path.DirectorySeparatorChar == '/'){
 				//Unix Path
 				ParseAsUnixAbsoluteFilePath (uriString);
-#if MOONLIGHT
-				isAbsoluteUri = false;
-#else
 				if (kind == UriKind.Relative)
 					isAbsoluteUri = false;
-#endif
 				return null;
 			} else if (uriString.Length >= 2 && uriString [0] == '\\' && uriString [1] == '\\') {
 				//Windows UNC
@@ -1435,6 +1440,8 @@ namespace System {
 				path = uriString;
 				return null;
 			}
+			
+			scheme = TryGetKnownUriSchemeInstance (scheme);
 
 			// from here we're practically working on uriString.Substring(startpos,endpos-startpos)
 			int startpos = pos + 1;
@@ -1599,7 +1606,11 @@ namespace System {
 				host = String.Empty;
 			} else if (scheme == UriSchemeFile) {
 				// under Windows all file:// URI are considered UNC, which is not the case other MacOS (e.g. Silverlight)
+#if BOOTSTRAP_BASIC
 				isUnc = isWin32;
+#else
+				isUnc = Environment.IsRunningOnWindows;
+#endif
 			} else if (host.Length == 0 &&
 				   (scheme == UriSchemeHttp || scheme == UriSchemeGopher || scheme == UriSchemeNntp ||
 				    scheme == UriSchemeHttps || scheme == UriSchemeFtp)) {
@@ -1641,7 +1652,17 @@ namespace System {
 
 			return null;
 		}
-
+		
+		private static string TryGetKnownUriSchemeInstance (string scheme)
+		{
+			foreach (string knownScheme in knownUriSchemes) {
+				if (knownScheme == scheme)
+					return knownScheme;
+			}
+			
+			return scheme;
+		}
+	
 		private static bool CompactEscaped (string scheme)
 		{
 			if (scheme == null || scheme.Length < 4)
@@ -2013,7 +2034,7 @@ namespace System {
 
 		public bool IsBaseOf (Uri uri)
 		{
-#if NET_4_0 || MOONLIGHT || MOBILE
+#if NET_4_0
 			if (uri == null)
 				throw new ArgumentNullException ("uri");
 #endif
@@ -2051,11 +2072,19 @@ namespace System {
 		//
 		static bool NeedToEscapeDataChar (char b)
 		{
+#if NET_4_0
+			// .NET 4.0 follows RFC 3986 Unreserved Characters
+			return !((b >= 'A' && b <= 'Z') ||
+				 (b >= 'a' && b <= 'z') ||
+				 (b >= '0' && b <= '9') ||
+				 b == '-' || b == '.' || b == '_' || b == '~');
+#else
 			return !((b >= 'A' && b <= 'Z') ||
 				 (b >= 'a' && b <= 'z') ||
 				 (b >= '0' && b <= '9') ||
 				 b == '_' || b == '~' || b == '!' || b == '\'' ||
 				 b == '(' || b == ')' || b == '*' || b == '-' || b == '.');
+#endif
 		}
 		
 		public static string EscapeDataString (string stringToEscape)
@@ -2064,9 +2093,9 @@ namespace System {
 				throw new ArgumentNullException ("stringToEscape");
 
 			if (stringToEscape.Length > MaxUriLength) {
-				string msg = Locale.GetText ("Uri is longer than the maximum {0} characters.");
-				throw new UriFormatException (msg);
+				throw new UriFormatException (string.Format ("Uri is longer than the maximum {0} characters.", MaxUriLength));
 			}
+
 			bool escape = false;
 			foreach (char c in stringToEscape){
 				if (NeedToEscapeDataChar (c)){
@@ -2094,11 +2123,27 @@ namespace System {
 		//
 		static bool NeedToEscapeUriChar (char b)
 		{
-			return !((b >= 'A' && b <= 'Z') ||
-				 (b >= 'a' && b <= 'z') ||
-				 (b >= '&' && b <= ';') ||
-				 b == '!' || b == '#' || b == '$' || b == '=' ||
-				 b == '?' || b == '@' || b == '_' || b == '~');
+			if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '&' && b <= ';'))
+				return false;
+
+			switch (b) {
+			case '!':
+			case '#':
+			case '$':
+			case '=':
+			case '?':
+			case '@':
+			case '_':
+			case '~':
+#if NET_4_0
+			// .NET 4.0 follows RFC 3986
+			case '[':
+			case ']':
+#endif
+				return false;
+			default:
+				return true;
+			}
 		}
 		
 		public static string EscapeUriString (string stringToEscape)
@@ -2107,8 +2152,7 @@ namespace System {
 				throw new ArgumentNullException ("stringToEscape");
 
 			if (stringToEscape.Length > MaxUriLength) {
-				string msg = Locale.GetText ("Uri is longer than the maximum {0} characters.");
-				throw new UriFormatException (msg);
+				throw new UriFormatException (string.Format ("Uri is longer than the maximum {0} characters.", MaxUriLength));
 			}
 
 			bool escape = false;
@@ -2184,7 +2228,7 @@ namespace System {
 			result = null;
 			if ((baseUri == null) || !baseUri.IsAbsoluteUri)
 				return false;
-#if NET_4_0 || MOONLIGHT || MOBILE
+#if NET_4_0
 			if (relativeUri == null)
 				return false;
 #endif

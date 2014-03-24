@@ -3,10 +3,10 @@ SUBDIRS =
 include ../../build/rules.make
 
 MDOC_COMMON_FLAGS = \
-	/resource:../monodoc/Resources/mdoc-html-format.xsl,mdoc-html-format.xsl    \
-	/resource:../monodoc/Resources/mdoc-html-utils.xsl,mdoc-html-utils.xsl      \
-	/resource:../monodoc/Resources/mdoc-sections-css.xsl,mdoc-sections-css.xsl  \
-	/resource:../monodoc/Resources/mono-ecma-css.xsl,mono-ecma-css.xsl          \
+	/resource:../../class/monodoc/Resources/mdoc-html-format.xsl,mdoc-html-format.xsl    \
+	/resource:../../class/monodoc/Resources/mdoc-html-utils.xsl,mdoc-html-utils.xsl      \
+	/resource:../../class/monodoc/Resources/mdoc-sections-css.xsl,mdoc-sections-css.xsl  \
+	/resource:../../class/monodoc/Resources/mono-ecma-css.xsl,mono-ecma-css.xsl          \
 	/resource:Resources/defaulttemplate.xsl,defaulttemplate.xsl                 \
 	/resource:Resources/monodoc-ecma.xsd,monodoc-ecma.xsd                       \
 	/resource:Resources/msitomsx.xsl,msitomsx.xsl                               \
@@ -18,9 +18,9 @@ MDOC_COMMON_FLAGS = \
 	/r:Mono.Cecil.dll
 
 LOCAL_MCS_FLAGS = $(MDOC_COMMON_FLAGS) \
-	/r:$(topdir)/class/lib/net_2_0/monodoc.dll
+	/r:monodoc.dll
 PROGRAM = mdoc.exe
-PROGRAM_DEPS = $(topdir)/class/lib/net_2_0/monodoc.dll
+PROGRAM_DEPS = $(topdir)/class/lib/$(PROFILE)/monodoc.dll
 
 ifdef NET
 all : copy-with-deps
@@ -28,16 +28,16 @@ all : copy-with-deps
 copy-with-deps:
 	-mkdir mdoc-net
 	cp $(PROGRAM) mdoc-net
-	cp $(topdir)/class/lib/net_2_0/Commons.Xml.Relaxng.dll mdoc-net
-	cp $(topdir)/class/lib/net_2_0/ICSharpCode.SharpZipLib.dll mdoc-net
-	cp $(topdir)/class/lib/net_2_0/Mono.Cecil.dll mdoc-net
-	cp $(topdir)/class/lib/net_2_0/monodoc.dll mdoc-net
+	cp $(topdir)/class/lib/$(PROFILE)/Commons.Xml.Relaxng.dll mdoc-net
+	cp $(topdir)/class/lib/$(PROFILE)/ICSharpCode.SharpZipLib.dll mdoc-net
+	cp $(topdir)/class/lib/$(PROFILE)/Mono.Cecil.dll mdoc-net
+	cp $(topdir)/class/lib/$(PROFILE)/monodoc.dll mdoc-net
 endif
 
 MONODOC_RESOURCES = \
-	../monodoc/Resources/mdoc-html-utils.xsl    \
-	../monodoc/Resources/mdoc-sections-css.xsl  \
-	../monodoc/Resources/mono-ecma-css.xsl
+	../../class/monodoc/Resources/mdoc-html-utils.xsl    \
+	../../class/monodoc/Resources/mdoc-sections-css.xsl  \
+	../../class/monodoc/Resources/mono-ecma-css.xsl
 
 MDOC_RESOURCES = \
 	Resources/defaulttemplate.xsl     \
@@ -61,7 +61,12 @@ EXTRA_DISTFILES = \
 
 $(PROGRAM) : $(MDOC_RESOURCES) $(MONODOC_RESOURCES) $(PROGRAM_DEPS)
 
+PROGRAM_COMPILE = $(CSCOMPILE) -platform:x86
+
 include ../../build/executable.make
+
+$(PROGRAM) : $(build_lib)
+	cp $< $@
 
 $(PROGRAM) : Makefile
 

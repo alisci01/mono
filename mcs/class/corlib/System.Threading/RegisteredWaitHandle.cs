@@ -37,9 +37,7 @@ namespace System.Threading
 {
 	[ComVisible (true)]
 	public sealed class RegisteredWaitHandle
-#if !MOONLIGHT
 		: MarshalByRefObject
-#endif
 	{
 		WaitHandle _waitObject;
 		WaitOrTimerCallback _callback;
@@ -118,11 +116,5 @@ namespace System.Threading
 			}
 		}
 
-#if ONLY_1_1
-		[MonoTODO]
-		~RegisteredWaitHandle() {
-			// FIXME
-		}
-#endif
 	}
 }

@@ -1,12 +1,11 @@
-// CS0103: The name `Test' does not exist in the current context
-// Line: 10
+// CS0103: The name `bar' does not exist in the current context
+// Line: 8
 
-class A
+public class Test
 {
-	delegate string Test (string t);
-
-	public static void Main ()
+	static void Main ()
 	{
-		Test ("t");
+		if (false && bar ()) {
+		}
 	}
 }

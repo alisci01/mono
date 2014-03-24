@@ -5,12 +5,14 @@
  *   Gonzalo Paniagua Javier (gonzalo@novell.com)
  *
  * Copyright (c) 2011 Novell, Inc (http://www.novell.com)
+ * Copyright 2011 Xamarin Inc
  */
 
 #include <mono/metadata/object.h>
 #include <mono/metadata/mono-cq.h>
 #include <mono/metadata/mono-mlist.h>
 #include <mono/utils/mono-memory-model.h>
+#include <mono/utils/atomic.h>
 
 #define CQ_DEBUG(...)
 //#define CQ_DEBUG(...) g_message(__VA_ARGS__)
@@ -65,8 +67,8 @@ mono_cq_create ()
 	MonoCQ *cq;
 
 	cq = g_new0 (MonoCQ, 1);
-	MONO_GC_REGISTER_ROOT (cq->head);
-	MONO_GC_REGISTER_ROOT (cq->tail);
+	MONO_GC_REGISTER_ROOT_SINGLE (cq->head);
+	MONO_GC_REGISTER_ROOT_SINGLE (cq->tail);
 	cq->head = mono_mlist_alloc ((MonoObject *) mono_cqitem_alloc ());
 	cq->tail = cq->head;
 	CQ_DEBUG ("Created %p", cq);
@@ -80,7 +82,7 @@ mono_cq_destroy (MonoCQ *cq)
 	if (!cq)
 		return;
 
-	mono_gc_bzero (cq, sizeof (MonoCQ));
+	mono_gc_bzero_aligned (cq, sizeof (MonoCQ));
 	MONO_GC_UNREGISTER_ROOT (cq->tail);
 	MONO_GC_UNREGISTER_ROOT (cq->head);
 	g_free (cq);
@@ -106,6 +108,10 @@ mono_cq_add_node (MonoCQ *cq)
 	n = mono_mlist_alloc ((MonoObject *) mono_cqitem_alloc ());
 	prev_tail = cq->tail;
 	MONO_OBJECT_SETREF (prev_tail, next, n);
+
+	/* prev_tail->next must be visible before the new tail is */
+	STORE_STORE_FENCE;
+
 	cq->tail = n;
 }
 
@@ -126,9 +132,9 @@ mono_cqitem_try_enqueue (MonoCQ *cq, MonoObject *obj)
 		}
 
 		if (InterlockedCompareExchange (&queue->last, pos + 1, pos) == pos) {
-			mono_array_setref (queue->array, pos, obj);
+			mono_array_setref_fast (queue->array, pos, obj);
 			STORE_STORE_FENCE;
-			mono_array_set (queue->array_state, char, pos, TRUE);
+			mono_array_set_fast (queue->array_state, char, pos, TRUE);
 			if ((pos + 1) == CQ_ARRAY_SIZE) {
 				CQ_DEBUG ("enqueue(): pos + 1 == CQ_ARRAY_SIZE, %d. Adding node.", CQ_ARRAY_SIZE);
 				mono_cq_add_node (cq);

@@ -26,12 +26,17 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Collections.Generic;
+
 namespace System.Net.Http.Headers
 {
 	public class ViaHeaderValue : ICloneable
 	{
 		public ViaHeaderValue (string protocolVersion, string receivedBy)
 		{
+			Parser.Token.Check (protocolVersion);
+			Parser.Uri.Check (receivedBy);
+
 			ProtocolVersion = protocolVersion;
 			ReceivedBy = receivedBy;
 		}
@@ -39,13 +44,23 @@ namespace System.Net.Http.Headers
 		public ViaHeaderValue (string protocolVersion, string receivedBy, string protocolName)
 			: this (protocolVersion, receivedBy)
 		{
-			ProtocolName = protocolName;
+			if (!string.IsNullOrEmpty (protocolName)) {
+				Parser.Token.Check (protocolName);
+				ProtocolName = protocolName;
+			}
 		}
 
 		public ViaHeaderValue (string protocolVersion, string receivedBy, string protocolName, string comment)
 			: this (protocolVersion, receivedBy, protocolName)
 		{
-			Comment = comment;
+			if (!string.IsNullOrEmpty (comment)) {
+				Parser.Token.CheckComment (comment);
+				Comment = comment;
+			}
+		}
+
+		private ViaHeaderValue ()
+		{
 		}
 
 		public string Comment { get; private set; }
@@ -97,7 +112,76 @@ namespace System.Net.Http.Headers
 		
 		public static bool TryParse (string input, out ViaHeaderValue parsedValue)
 		{
-			throw new NotImplementedException ();
+			var lexer = new Lexer (input);
+			Token token;
+			if (TryParseElement (lexer, out parsedValue, out token) && token == Token.Type.End)
+				return true;
+
+			parsedValue = null;
+			return false;
+		}
+
+		internal static bool TryParse (string input, int minimalCount, out List<ViaHeaderValue> result)
+		{
+			return CollectionParser.TryParse (input, minimalCount, TryParseElement, out result);
+		}
+
+		static bool TryParseElement (Lexer lexer, out ViaHeaderValue parsedValue, out Token t)	
+		{
+			parsedValue = null;
+
+			t = lexer.Scan ();
+			if (t != Token.Type.Token)
+				return false;
+
+			var next = lexer.Scan ();
+			ViaHeaderValue value = new ViaHeaderValue ();
+
+			if (next == Token.Type.SeparatorSlash) {
+				next = lexer.Scan ();
+				if (next != Token.Type.Token)
+					return false;
+
+				value.ProtocolName = lexer.GetStringValue (t);
+				value.ProtocolVersion = lexer.GetStringValue (next);
+
+				next = lexer.Scan ();
+			} else {
+				value.ProtocolVersion = lexer.GetStringValue (t);
+			}
+
+			if (next != Token.Type.Token)
+				return false;
+
+			if (lexer.PeekChar () == ':') {
+				lexer.EatChar ();
+
+				t = lexer.Scan ();
+				if (t != Token.Type.Token)
+					return false;
+			} else {
+				t = next;
+			}
+
+			value.ReceivedBy = lexer.GetStringValue (next, t);
+
+			string comment;
+			if (lexer.ScanCommentOptional (out comment, out t)) {
+				t = lexer.Scan ();
+			}
+
+			value.Comment = comment;
+			parsedValue = value;
+			return true;
+		}
+
+		public override string ToString ()
+		{
+			string s = ProtocolName != null ?
+				ProtocolName + "/" + ProtocolVersion + " " + ReceivedBy :
+				ProtocolVersion + " " + ReceivedBy;
+
+			return Comment != null ? s + " " + Comment : s;
 		}
 	}
 }

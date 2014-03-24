@@ -374,7 +374,7 @@ namespace System.Collections.Generic {
 			//	 Hashtable is automatically increased
 			//	 to the smallest prime number that is larger
 			//	 than twice the current number of Hashtable buckets
-			int newSize = Hashtable.ToPrime ((table.Length << 1) | 1);
+			int newSize = HashPrimeNumbers.ToPrime ((table.Length << 1) | 1);
 
 			// allocate new hash table and link slots array
 			int [] newTable = new int [newSize];
@@ -690,7 +690,7 @@ namespace System.Collections.Generic {
 			get { return false; }
 		}
 
-		TKey ToTKey (object key)
+		static TKey ToTKey (object key)
 		{
 			if (key == null)
 				throw new ArgumentNullException ("key");
@@ -699,7 +699,7 @@ namespace System.Collections.Generic {
 			return (TKey) key;
 		}
 
-		TValue ToTValue (object value)
+		static TValue ToTValue (object value)
 		{
 			if (value == null && !typeof (TValue).IsValueType)
 				return default (TValue);
@@ -710,8 +710,9 @@ namespace System.Collections.Generic {
 
 		object IDictionary.this [object key] {
 			get {
-				if (key is TKey && ContainsKey((TKey) key))
-					return this [ToTKey (key)];
+				TValue obj;
+				if (key is TKey && TryGetValue ((TKey) key, out obj))
+					return obj;
 				return null;
 			}
 			set { this [ToTKey (key)] = ToTValue (value); }

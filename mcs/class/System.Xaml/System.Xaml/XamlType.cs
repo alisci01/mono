@@ -89,7 +89,7 @@ namespace System.Xaml
 			Name = unknownTypeName;
 			PreferredXamlNamespace = unknownTypeNamespace;
 			TypeArguments = typeArguments != null && typeArguments.Count == 0 ? null : typeArguments;
-			explicit_ns = unknownTypeNamespace;
+//			explicit_ns = unknownTypeNamespace;
 		}
 
 		protected XamlType (string typeName, IList<XamlType> typeArguments, XamlSchemaContext schemaContext)
@@ -107,7 +107,7 @@ namespace System.Xaml
 
 		Type type, underlying_type;
 
-		string explicit_ns;
+//		string explicit_ns;
 
 		// populated properties
 		XamlType base_type;
@@ -771,11 +771,7 @@ namespace System.Xaml
 
 			// It's still not decent to check CollectionConverter.
 			var tct = t.GetTypeConverter ().GetType ();
-#if MOONLIGHT
-			if (tct != typeof (TypeConverter) && tct.Name != "CollectionConverter" && tct.Name != "ReferenceConverter")
-#else
 			if (tct != typeof (TypeConverter) && tct != typeof (CollectionConverter) && tct != typeof (ReferenceConverter))
-#endif
 				return SchemaContext.GetValueConverter<TypeConverter> (tct, this);
 			return null;
 		}

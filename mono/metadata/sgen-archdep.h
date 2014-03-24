@@ -1,34 +1,39 @@
 /*
- * SGen is licensed under the terms of the MIT X11 license
+ * sgen-archdep.h: Architecture dependent parts of SGen.
  *
  * Copyright 2001-2003 Ximian, Inc
  * Copyright 2003-2010 Novell, Inc.
- * 
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- * 
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- * 
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * Copyright (C) 2012 Xamarin Inc
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License 2.0 as published by the Free Software Foundation;
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License 2.0 along with this library; if not, write to the Free
+ * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #ifndef __MONO_SGENARCHDEP_H__
 #define __MONO_SGENARCHDEP_H__
 
 #include <mono/utils/mono-sigcontext.h>
 
-#ifdef __i386__
+#if defined(MONO_CROSS_COMPILE)
+
+#define REDZONE_SIZE	0
+
+#define ARCH_NUM_REGS 0
+#define ARCH_STORE_REGS(ptr)
+#define ARCH_SIGCTX_SP(ctx) NULL
+#define ARCH_SIGCTX_IP(ctx) NULL
+#define ARCH_COPY_SIGCTX_REGS(a,ctx)
+
+#elif defined(TARGET_X86)
 
 #include <mono/utils/mono-context.h>
 
@@ -39,26 +44,14 @@
 #ifdef MONO_ARCH_HAS_MONO_CONTEXT
 #define USE_MONO_CTX
 #else
-#define ARCH_STORE_REGS(ptr)	\
-	__asm__ __volatile__(	\
-		"mov %%edi,0(%0)\n"	\
-		"mov %%esi,4(%0)\n"	\
-		"mov %%ebx,8(%0)\n"	\
-		"mov %%edx,12(%0)\n"	\
-		"mov %%ecx,16(%0)\n"	\
-		"mov %%eax,20(%0)\n"	\
-		"mov %%ebp,24(%0)\n"	\
-		"mov %%esp,28(%0)\n"	\
-		:			\
-		: "r" (ptr)	\
-	)
+#error 0
 #endif
 
 /*FIXME, move this to mono-sigcontext as this is generaly useful.*/
 #define ARCH_SIGCTX_SP(ctx)    (UCONTEXT_REG_ESP ((ctx)))
 #define ARCH_SIGCTX_IP(ctx)    (UCONTEXT_REG_EIP ((ctx)))
 
-#elif defined(__x86_64__)
+#elif defined(TARGET_AMD64)
 
 #include <mono/utils/mono-context.h>
 
@@ -71,7 +64,7 @@
 #define ARCH_SIGCTX_SP(ctx)    (UCONTEXT_REG_RSP (ctx))
 #define ARCH_SIGCTX_IP(ctx)    (UCONTEXT_REG_RIP (ctx))
 
-#elif defined(__ppc__) || defined(__powerpc__) || defined(__powerpc64__)
+#elif defined(TARGET_POWERPC)
 
 #define REDZONE_SIZE	224
 
@@ -96,12 +89,13 @@
 #define ARCH_COPY_SIGCTX_REGS(a,ctx) do {	\
 	int __i;	\
 	for (__i = 0; __i < 32; ++__i)	\
-		((a)[__i]) = UCONTEXT_REG_Rn((ctx), __i);	\
+		((a)[__i]) = (gpointer) UCONTEXT_REG_Rn((ctx), __i);	\
 	} while (0)
 
-#elif defined(__arm__)
+#elif defined(TARGET_ARM)
 
 #define REDZONE_SIZE	0
+#define USE_MONO_CTX
 
 /* We dont store ip, sp */
 #define ARCH_NUM_REGS 14
@@ -138,53 +132,15 @@
 
 #define REDZONE_SIZE	0
 
-/* register 0 is always 0, so we skip it */
-#define ARCH_NUM_REGS 31
-#define ARCH_STORE_REGS(ptr)		\
-	__asm__ __volatile__(	\
-		"sw $1,0(%0)\n\t"	\
-		"sw $2,4(%0)\n\t"	\
-		"sw $3,8(%0)\n\t"	\
-		"sw $4,12(%0)\n\t"	\
-		"sw $5,16(%0)\n\t"	\
-		"sw $6,20(%0)\n\t"	\
-		"sw $7,24(%0)\n\t"	\
-		"sw $8,28(%0)\n\t"	\
-		"sw $9,32(%0)\n\t"	\
-		"sw $10,36(%0)\n\t"	\
-		"sw $11,40(%0)\n\t"	\
-		"sw $12,44(%0)\n\t"	\
-		"sw $13,48(%0)\n\t"	\
-		"sw $14,52(%0)\n\t"	\
-		"sw $15,56(%0)\n\t"	\
-		"sw $16,60(%0)\n\t"	\
-		"sw $17,64(%0)\n\t"	\
-		"sw $18,68(%0)\n\t"	\
-		"sw $19,72(%0)\n\t"	\
-		"sw $20,76(%0)\n\t"	\
-		"sw $21,80(%0)\n\t"	\
-		"sw $22,84(%0)\n\t"	\
-		"sw $23,88(%0)\n\t"	\
-		"sw $24,92(%0)\n\t"	\
-		"sw $25,96(%0)\n\t"	\
-		"sw $26,100(%0)\n\t"	\
-		"sw $27,104(%0)\n\t"	\
-		"sw $28,108(%0)\n\t"	\
-		"sw $29,112(%0)\n\t"	\
-		"sw $30,116(%0)\n\t"	\
-		"sw $31,120(%0)\n\t"	\
-		: 			\
-		: "r" (ptr)		\
-		: "memory"			\
-	)
+#define USE_MONO_CTX
+#define ARCH_NUM_REGS 32
 
-#define ARCH_SIGCTX_SP(ctx)	(UCONTEXT_GREGS((ctx))[29])
-#define ARCH_SIGCTX_IP(ctx)	(UCONTEXT_REG_PC((ctx)))
-#define ARCH_COPY_SIGCTX_REGS(a,ctx) do {			\
-	int __regnum;	\
-	for (__regnum = 0; __regnum < 32; ++__regnum)	\
-		((a)[__regnum]) = (gpointer) (UCONTEXT_GREGS((ctx))[__regnum]);		\
-	} while (0)
+/*
+ * These casts are necessary since glibc always makes the
+ * gregs 64-bit values in userland.
+ */
+#define ARCH_SIGCTX_SP(ctx)	((gsize) UCONTEXT_GREGS((ctx))[29])
+#define ARCH_SIGCTX_IP(ctx)	((gsize) UCONTEXT_REG_PC((ctx)))
 
 #elif defined(__s390x__)
 
@@ -247,6 +203,10 @@
 		: "r" (ptr)		\
 		: "memory"			\
 	)
+#endif
+
+#ifndef REG_SP
+#define REG_SP REG_O6
 #endif
 
 #define ARCH_SIGCTX_SP(ctx)	(((ucontext_t *)(ctx))->uc_mcontext.gregs [REG_SP])

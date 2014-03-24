@@ -26,23 +26,33 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Collections.Generic;
+
 namespace System.Net.Http.Headers
 {
 	public class ProductHeaderValue : ICloneable
 	{
 		public ProductHeaderValue (string name)
-			: this (name, null)
 		{
+			Parser.Token.Check (name);
+			Name = name;
 		}
 
 		public ProductHeaderValue (string name, string version)
+			: this (name)
 		{
-			Name = name;
+			if (version != null)
+				Parser.Token.Check (version);
+
 			Version = version;
 		}
 
-		public string Name { get; private set; }
-		public string Version { get; private set; }
+		internal ProductHeaderValue ()
+		{
+		}
+
+		public string Name { get; internal set; }
+		public string Version { get; internal set; }
 
 		object ICloneable.Clone ()
 		{
@@ -79,7 +89,47 @@ namespace System.Net.Http.Headers
 
 		public static bool TryParse (string input, out ProductHeaderValue parsedValue)
 		{
-			throw new NotImplementedException ();
+			var lexer = new Lexer (input);
+			Token token;
+			if (TryParseElement (lexer, out parsedValue, out token) && token == Token.Type.End)
+				return true;
+
+			parsedValue = null;
+			return false;
+		}
+
+		internal static bool TryParse (string input, int minimalCount, out List<ProductHeaderValue> result)
+		{
+			return CollectionParser.TryParse (input, minimalCount, TryParseElement, out result);
+		}
+
+		static bool TryParseElement (Lexer lexer, out ProductHeaderValue parsedValue, out Token t)
+		{
+			parsedValue = null;
+
+			t = lexer.Scan ();
+			if (t != Token.Type.Token)
+				return false;
+
+			parsedValue = new ProductHeaderValue ();
+			parsedValue.Name = lexer.GetStringValue (t);
+
+			t = lexer.Scan ();
+			if (t == Token.Type.SeparatorSlash) {
+				t = lexer.Scan ();
+				if (t != Token.Type.Token)
+					return false;
+
+				parsedValue.Version = lexer.GetStringValue (t);
+				t = lexer.Scan ();
+			}
+
+			return true;
+		}
+
+		public override string ToString ()
+		{
+			return Version == null ? Name : Name + "/" + Version;
 		}
 	}
 }

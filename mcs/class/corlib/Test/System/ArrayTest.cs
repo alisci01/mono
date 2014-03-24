@@ -61,7 +61,21 @@ public class ArrayTest
 {
 	char [] arrsort = {'d', 'b', 'f', 'e', 'a', 'c'};
 
-	public ArrayTest() {}
+	interface I
+	{
+	}
+
+	class C
+	{
+	}
+
+	class DC : C
+	{
+	}
+
+	class DI : I
+	{
+	}
 
 	[Test]
 	public void TestIsFixedSize() {
@@ -225,7 +239,23 @@ public class ArrayTest
 		Assert.AreEqual (-1, Array.BinarySearch (o, 0, 3, null, null), "O=a,i,i,o,c");
 	}
 
-	// TODO - testBinarySearch with explicit IComparer args
+	class TestComparer7 : IComparer<int>
+	{
+		public int Compare (int x, int y)
+		{
+			if (y != 7)
+				throw new ApplicationException ();
+
+			return x.CompareTo (y);
+		}
+	}
+
+	[Test]
+	public void BinarySearch_WithComparer ()
+	{
+		var a = new int[] { 2, 6, 9 };
+		Assert.AreEqual (-3, Array.BinarySearch (a, 7, new TestComparer7 ()));
+	}
 
 	[Test]
 	public void TestClear() {
@@ -472,14 +502,24 @@ public class ArrayTest
 	}
 
 	[Test]
-	[ExpectedException (typeof (InvalidCastException))]
 	public void Copy_InvalidCast () {
 		object[] arr1 = new object [10];
 		Type[] arr2 = new Type [10];
-
 		arr1 [0] = new object ();
 
-		Array.Copy (arr1, 0, arr2, 0, 10);
+		try {
+			Array.Copy (arr1, 0, arr2, 0, 10);
+			Assert.Fail ("#1");
+		} catch (InvalidCastException) {
+		}
+
+		var arr1_2 = new I [1] { new DI () };
+		var arr2_2 = new C [1] { new DC () };
+		try {
+			Array.Copy (arr2_2, arr1_2, 1);
+			Assert.Fail ("#1");
+		} catch (InvalidCastException) {
+		}
 	}
 
 	[Test]
@@ -657,7 +697,7 @@ public class ArrayTest
 			}
 			Assert.IsTrue (errorThrown, "#F03a");
 		}
-#if NET_1_1
+
 		{
 			bool errorThrown = false;
 			try {
@@ -667,7 +707,6 @@ public class ArrayTest
 			}
 			Assert.IsTrue (errorThrown, "#F03b");
 		}
-#endif
 #if !TARGET_JVM // Arrays lower bounds are not supported for TARGET_JVM
 		{
 			bool errorThrown = false;
@@ -1603,6 +1642,126 @@ public class ArrayTest
 		}
 	}
 
+
+	[Test]
+	public void FindIndexTest ()
+	{
+		var a = new int[] { 2, 2, 2, 3, 2 };
+		Assert.AreEqual (2, Array.FindIndex (a, 2, 2, l => true));
+	}
+
+	[Test]
+	public void FindIndex_Invalid ()
+	{
+		var array = new int [] { 1, 2, 3, 4, 5 };
+
+		try {
+			Array.FindIndex (array, null);
+			Assert.Fail ("#1");
+		} catch (ArgumentNullException) {
+		}
+
+		try {
+			Array.FindIndex (array, -1, l => true);
+			Assert.Fail ("#2");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindIndex (array, -1, 0, l => true);
+			Assert.Fail ("#2b");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindIndex (array, 0, -1, l => true);
+			Assert.Fail ("#3");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindIndex (array, 100, l => true);
+			Assert.Fail ("#4");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindIndex (array, 100, 0, l => true);
+			Assert.Fail ("#4b");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindIndex (array, 7, 2, l => true);
+			Assert.Fail ("#5");
+		} catch (ArgumentOutOfRangeException) {
+		}
+	}
+
+	[Test, ExpectedException (typeof (ArgumentNullException))]
+	public void FindLastNullTest ()
+	{
+		var array = new int [] { 1, 2, 3, 4, 5 };		
+		Array.FindLast (array, null);
+	}
+
+	[Test]
+	public void FindLastIndexTest ()
+	{
+		var array = new int [] { 1, 2, 3, 4, 5 };
+
+		Assert.AreEqual (2, Array.FindLastIndex (array, 2, 3, l => true));
+		Assert.AreEqual (2, Array.FindLastIndex (array, 2, 2, l => true));
+		Assert.AreEqual (1, Array.FindLastIndex (array, 1, 2, l => true));
+	}
+
+	[Test]
+	public void FindLastIndex_Invalid ()
+	{
+		var array = new int [] { 1, 2, 3, 4, 5 };
+		try {
+			Array.FindLastIndex (array, null);
+			Assert.Fail ("#1");
+		} catch (ArgumentNullException) {
+		}
+
+		try {
+			Array.FindLastIndex (array, -1, l => true);
+			Assert.Fail ("#2");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindLastIndex (array, -1, 0, l => true);
+			Assert.Fail ("#2b");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindLastIndex (array, 0, -1, l => true);
+			Assert.Fail ("#3");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindLastIndex (array, 100, l => true);
+			Assert.Fail ("#4");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindLastIndex (array, 100, 0, l => true);
+			Assert.Fail ("#4b");
+		} catch (ArgumentOutOfRangeException) {
+		}
+
+		try {
+			Array.FindLastIndex (array, 2, 4, l => true);
+			Assert.Fail ("#5");
+		} catch (ArgumentOutOfRangeException) {
+		}
+	}
+
 	[Test]
 	public void TestReverse() {
 		{
@@ -1678,6 +1837,25 @@ public class ArrayTest
 		Assert.AreEqual ('c', c2[1], "#L12");
 		Assert.AreEqual ('b', c2[2], "#L13");
 		Assert.AreEqual ('d', c2[3], "#L14");
+	}
+
+	[Test]
+	// #8904
+	public void ReverseStruct () {
+		BStruct[] c3 = new BStruct[2];
+		c3 [0] = new BStruct () { i1 = 1, i2 = 2, i3 = 3 };
+		c3 [1] = new BStruct () { i1 = 4, i2 = 5, i3 = 6 };
+		Array.Reverse (c3);
+		Assert.AreEqual (4, c3 [0].i1);
+		Assert.AreEqual (5, c3 [0].i2);
+		Assert.AreEqual (6, c3 [0].i3);
+		Assert.AreEqual (1, c3 [1].i1);
+		Assert.AreEqual (2, c3 [1].i2);
+		Assert.AreEqual (3, c3 [1].i3);
+	}
+
+	struct BStruct {
+		public int i1, i2, i3;
 	}
 
 	[Test]
@@ -2330,6 +2508,27 @@ public class ArrayTest
 			Array.Sort (a, names, null);
 			Assert.AreEqual (0, a.GetValue (0));
 		}
+	}
+
+	[Test]
+	public void Sort_NullValues ()
+	{
+		var s = new [] { "a", null, "b", null };
+		Array.Sort (s, (a, b) => {
+			if (a == null) {
+				return b == null ? 0 : 1;
+			}
+
+			if (b == null)
+				return -1;
+
+			return a.CompareTo (b);
+		});
+
+		Assert.AreEqual ("a", s [0], "#1");
+		Assert.AreEqual ("b", s [1], "#2");
+		Assert.IsNull (s [2], "#3");
+		Assert.IsNull (s [3], "#4");
 	}
 
 	[Test] // #616416
@@ -3258,6 +3457,16 @@ public class ArrayTest
 		}
 	}
 
+	[Test] //bxc #11184
+	public void UnalignedArrayClear ()
+	{
+		byte[] input = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+		byte[] expected = new byte[] { 1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+		Array.Clear (input, 5, 11);
+		
+		Assert.AreEqual (input, expected);
+	}
+
 #if NET_4_0
 	[Test]
 	[ExpectedException (typeof (ArgumentException))]
@@ -3390,6 +3599,39 @@ public class ArrayTest
 		IStructuralEquatable array = new int[] {1, 2, 3};
 		IStructuralComparable array2 = new int[] {1, 2, 3};
 		array.Equals (array2, EqualityComparer<long>.Default);
+	}
+
+	[Test]
+	[ExpectedException (typeof (ArgumentNullException))]	
+	public void IStructuralEquatable_GetHashCode_NullComparer ()
+	{
+		IStructuralEquatable a = new int[] { 1, 2 };
+		a.GetHashCode (null);
+	}
+
+	class TestComparer_GetHashCode : IEqualityComparer
+	{
+		public int Counter;
+
+		bool IEqualityComparer.Equals (object x, object y)
+		{
+			throw new NotImplementedException ();
+		}
+
+		public int GetHashCode (object obj)
+		{
+			return Counter++;
+		}
+	}
+
+	[Test]
+	public void IStructuralEquatable_GetHashCode ()
+	{
+		IStructuralEquatable a = new int[] { 1, 2, 9 };
+
+		var c = new TestComparer_GetHashCode ();
+		a.GetHashCode (c);
+		Assert.AreEqual (3, c.Counter);		
 	}
 
 #endif

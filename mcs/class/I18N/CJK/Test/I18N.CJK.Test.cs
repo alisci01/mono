@@ -85,9 +85,28 @@ namespace MonoTests.I18N.CJK
 		}
 
 		[Test]
+		public void CP936_Encode3 ()
+		{
+			AssertEncode("Test/texts/chinese3-utf8.txt", "Test/texts/chinese3-936.txt", 936);
+		}
+
+		[Test]
 		public void CP936_Decode ()
 		{
 			AssertDecode ("Test/texts/chinese-utf8.txt", "Test/texts/chinese-936.txt", 936);
+		}
+
+		[Test]
+		public void Bug_1531()
+		{
+			string str = @"wqk=";
+			byte[] utf8 = Convert.FromBase64String(str);
+			char[] data = Encoding.UTF8.GetChars(utf8);
+
+			var encoding = Manager.GetEncoding("GB2312");
+			var result = encoding.GetBytes(data);
+
+			Assert.AreEqual(new byte[] { 63 }, result);
 		}
 
 		// BIG5
@@ -96,6 +115,12 @@ namespace MonoTests.I18N.CJK
 		public void CP950_Encode ()
 		{
 			AssertEncode ("Test/texts/chinese2-utf8.txt", "Test/texts/chinese2-950.txt", 950);
+		}
+
+		[Test]
+		public void CP950_Encode4 ()
+		{
+			AssertEncode("Test/texts/chinese4-utf8.txt", "Test/texts/chinese4-950.txt", 950);
 		}
 
 		[Test]
@@ -549,6 +574,14 @@ namespace MonoTests.I18N.CJK
 			string s = Manager.GetEncoding ("ISO-2022-JP").GetString (b);
 			Assert.AreEqual ("don\u2019t", s);
 
+		}
+		
+		[Test]
+		public void Bug14591 ()
+		{
+			var expected = "\u4f50\u85e4\u8c4a";
+			var text = Encoding.GetEncoding ("iso-2022-jp").GetString (Convert.FromBase64String ("GyRAOjRGI0stGyhK"));
+			Assert.AreEqual (expected, text, "#1");
 		}
 		#endregion
 

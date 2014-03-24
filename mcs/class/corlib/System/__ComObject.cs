@@ -32,6 +32,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+#if !FULL_AOT_RUNTIME
 using Mono.Interop;
 using System.Collections;
 using System.Runtime.InteropServices;
@@ -99,6 +100,8 @@ namespace System
 			// Guard multiple invocation.
 			if (iunknown != IntPtr.Zero)
 				return;
+
+			System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor (t.TypeHandle);
 			
 			ObjectCreationDelegate ocd = ExtensibleClassFactory.GetObjectCreationCallback (t);
 			if (ocd != null) {
@@ -227,3 +230,4 @@ namespace System
 			out IntPtr pUnk);
 	}
 }
+#endif

@@ -29,6 +29,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 
 namespace System.Net.Http.Headers
 {
@@ -45,9 +46,12 @@ namespace System.Net.Http.Headers
 			public object Parsed;
 			List<string> values;
 
-			public HeaderBucket (object parsed)
+			public readonly Func<object, string> CustomToString;
+
+			public HeaderBucket (object parsed, Func<object, string> converter = null)
 			{
 				this.Parsed = parsed;
+				this.CustomToString = converter;
 			}
 
 			public bool HasStringValues {
@@ -60,6 +64,20 @@ namespace System.Net.Http.Headers
 				get {
 					return values ?? (values = new List<string> ());
 				}
+				set {
+					values = value;
+				}
+			}
+
+			public string ParsedToString ()
+			{
+				if (Parsed == null)
+					return null;
+
+				if (CustomToString != null)
+					return CustomToString (Parsed);
+
+				return Parsed.ToString ();
 			}
 		}
 
@@ -72,14 +90,23 @@ namespace System.Net.Http.Headers
 				HeaderInfo.CreateMulti<StringWithQualityHeaderValue> ("Accept-Charset", StringWithQualityHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateMulti<StringWithQualityHeaderValue> ("Accept-Encoding", StringWithQualityHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateMulti<StringWithQualityHeaderValue> ("Accept-Language", StringWithQualityHeaderValue.TryParse, HttpHeaderKind.Request),
-				HeaderInfo.CreateMulti<StringWithQualityHeaderValue> ("Accept-Ranges", StringWithQualityHeaderValue.TryParse, HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<string> ("Accept-Ranges", CollectionParser.TryParse, HttpHeaderKind.Response),
 				HeaderInfo.CreateSingle<TimeSpan> ("Age", Parser.TimeSpanSeconds.TryParse, HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<string> ("Allow", CollectionParser.TryParse, HttpHeaderKind.Content, 0),
 				HeaderInfo.CreateSingle<AuthenticationHeaderValue> ("Authorization", AuthenticationHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<CacheControlHeaderValue> ("Cache-Control", CacheControlHeaderValue.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
-				HeaderInfo.CreateSingle<string> ("Connection", Parser.Token.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<string> ("Connection", CollectionParser.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<string> ("Content-Encoding", CollectionParser.TryParse, HttpHeaderKind.Content),
+				HeaderInfo.CreateMulti<string> ("Content-Language", CollectionParser.TryParse, HttpHeaderKind.Content),
+				HeaderInfo.CreateSingle<long> ("Content-Length", Parser.Long.TryParse, HttpHeaderKind.Content),
+				HeaderInfo.CreateSingle<Uri> ("Content-Location", Parser.Uri.TryParse, HttpHeaderKind.Content),
+				HeaderInfo.CreateSingle<byte[]> ("Content-MD5", Parser.MD5.TryParse, HttpHeaderKind.Content),
+				HeaderInfo.CreateSingle<ContentRangeHeaderValue> ("Content-Range", ContentRangeHeaderValue.TryParse, HttpHeaderKind.Content),
+				HeaderInfo.CreateSingle<MediaTypeHeaderValue> ("Content-Type", MediaTypeHeaderValue.TryParse, HttpHeaderKind.Content),
 				HeaderInfo.CreateSingle<DateTimeOffset> ("Date", Parser.DateTime.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
 				HeaderInfo.CreateSingle<EntityTagHeaderValue> ("ETag", EntityTagHeaderValue.TryParse, HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<NameValueWithParametersHeaderValue> ("Expect", NameValueWithParametersHeaderValue.TryParse, HttpHeaderKind.Request),
+				HeaderInfo.CreateSingle<DateTimeOffset> ("Expires", Parser.DateTime.TryParse, HttpHeaderKind.Content),
 				HeaderInfo.CreateSingle<string> ("From", Parser.EmailAddress.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<Uri> ("Host", Parser.Uri.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateMulti<EntityTagHeaderValue> ("If-Match", EntityTagHeaderValue.TryParse, HttpHeaderKind.Request),
@@ -87,21 +114,22 @@ namespace System.Net.Http.Headers
 				HeaderInfo.CreateMulti<EntityTagHeaderValue> ("If-None-Match", EntityTagHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<RangeConditionHeaderValue> ("If-Range", RangeConditionHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<DateTimeOffset> ("If-Unmodified-Since", Parser.DateTime.TryParse, HttpHeaderKind.Request),
+				HeaderInfo.CreateSingle<DateTimeOffset> ("Last-Modified", Parser.DateTime.TryParse, HttpHeaderKind.Content),
 				HeaderInfo.CreateSingle<Uri> ("Location", Parser.Uri.TryParse, HttpHeaderKind.Response),
 				HeaderInfo.CreateSingle<int> ("Max-Forwards", Parser.Int.TryParse, HttpHeaderKind.Request),
-				HeaderInfo.CreateMulti<NameValueHeaderValue> ("Pragma", NameValueHeaderValue.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
-				HeaderInfo.CreateSingle<AuthenticationHeaderValue> ("Proxy-Authenticate", AuthenticationHeaderValue.TryParse, HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<NameValueHeaderValue> ("Pragma", NameValueHeaderValue.TryParsePragma, HttpHeaderKind.Request | HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<AuthenticationHeaderValue> ("Proxy-Authenticate", AuthenticationHeaderValue.TryParse, HttpHeaderKind.Response),
 				HeaderInfo.CreateSingle<AuthenticationHeaderValue> ("Proxy-Authorization", AuthenticationHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<RangeHeaderValue> ("Range", RangeHeaderValue.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<Uri> ("Referer", Parser.Uri.TryParse, HttpHeaderKind.Request),
 				HeaderInfo.CreateSingle<RetryConditionHeaderValue> ("Retry-After", RetryConditionHeaderValue.TryParse, HttpHeaderKind.Response),
-				HeaderInfo.CreateSingle<ProductInfoHeaderValue> ("Server", ProductInfoHeaderValue.TryParse, HttpHeaderKind.Response),
-				HeaderInfo.CreateMulti<TransferCodingWithQualityHeaderValue> ("TE", TransferCodingWithQualityHeaderValue.TryParse, HttpHeaderKind.Request),
-				HeaderInfo.CreateMulti<string> ("Trailer", Parser.Token.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<ProductInfoHeaderValue> ("Server", ProductInfoHeaderValue.TryParse, HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<TransferCodingWithQualityHeaderValue> ("TE", TransferCodingWithQualityHeaderValue.TryParse, HttpHeaderKind.Request, 0),
+				HeaderInfo.CreateMulti<string> ("Trailer", CollectionParser.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<TransferCodingHeaderValue> ("Transfer-Encoding", TransferCodingHeaderValue.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<ProductHeaderValue> ("Upgrade", ProductHeaderValue.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<ProductInfoHeaderValue> ("User-Agent", ProductInfoHeaderValue.TryParse, HttpHeaderKind.Request),
-				HeaderInfo.CreateMulti<string> ("Vary", Parser.Token.TryParse, HttpHeaderKind.Response),
+				HeaderInfo.CreateMulti<string> ("Vary", CollectionParser.TryParse, HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<ViaHeaderValue> ("Via", ViaHeaderValue.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<WarningHeaderValue> ("Warning", WarningHeaderValue.TryParse, HttpHeaderKind.Request | HttpHeaderKind.Response),
 				HeaderInfo.CreateMulti<AuthenticationHeaderValue> ("WWW-Authenticate", AuthenticationHeaderValue.TryParse, HttpHeaderKind.Response)
@@ -115,6 +143,8 @@ namespace System.Net.Http.Headers
 
 		readonly Dictionary<string, HeaderBucket> headers;
 		readonly HttpHeaderKind HeaderKind;
+
+		internal bool? connectionclose, transferEncodingChunked;
 
 		protected HttpHeaders ()
 		{
@@ -191,18 +221,22 @@ namespace System.Net.Http.Headers
 			return ok;
 		}
 
-		public void AddWithoutValidation (string name, string value)
+		public bool TryAddWithoutValidation (string name, string value)
 		{
-			AddWithoutValidation (name, new[] { value });
+			return TryAddWithoutValidation (name, new[] { value });
 		}
 
-		public void AddWithoutValidation (string name, IEnumerable<string> values)
+		public bool TryAddWithoutValidation (string name, IEnumerable<string> values)
 		{
 			if (values == null)
 				throw new ArgumentNullException ("values");
 
-			CheckName (name);
+			HeaderInfo headerInfo;
+			if (!TryCheckName (name, out headerInfo))
+				return false;
+
 			AddInternal (name, values, null, true);
+			return true;
 		}
 
 		HeaderInfo CheckName (string name)
@@ -213,14 +247,35 @@ namespace System.Net.Http.Headers
 			Parser.Token.Check (name);
 
 			HeaderInfo headerInfo;
-			if (known_headers.TryGetValue (name, out headerInfo) && (headerInfo.HeaderKind & HeaderKind) == 0)
-				throw new InvalidOperationException (name);
+			if (known_headers.TryGetValue (name, out headerInfo) && (headerInfo.HeaderKind & HeaderKind) == 0) {
+				if (HeaderKind != HttpHeaderKind.None && ((HeaderKind | headerInfo.HeaderKind) & HttpHeaderKind.Content) != 0)
+					throw new InvalidOperationException (name);
+
+				return null;
+			}
 
 			return headerInfo;
 		}
 
+		bool TryCheckName (string name, out HeaderInfo headerInfo)
+		{
+			if (!Parser.Token.TryCheck (name)) {
+				headerInfo = null;
+				return false;
+			}
+
+			if (known_headers.TryGetValue (name, out headerInfo) && (headerInfo.HeaderKind & HeaderKind) == 0) {
+				if (HeaderKind != HttpHeaderKind.None && ((HeaderKind | headerInfo.HeaderKind) & HttpHeaderKind.Content) != 0)
+					return false;
+			}
+
+			return true;
+		}
+
 		public void Clear ()
 		{
+			connectionclose = null;
+			transferEncodingChunked = null;
 			headers.Clear ();
 		}
 
@@ -254,6 +309,8 @@ namespace System.Net.Http.Headers
 
 		public IEnumerable<string> GetValues (string name)
 		{
+			CheckName (name);
+
 			IEnumerable<string> values;
 			if (!TryGetValues (name, out values))
 				throw new InvalidOperationException ();
@@ -269,7 +326,11 @@ namespace System.Net.Http.Headers
 
 		public bool TryGetValues (string name, out IEnumerable<string> values)
 		{
-			var header_info = CheckName (name);
+			HeaderInfo headerInfo;
+			if (!TryCheckName (name, out headerInfo)) {
+				values = null;
+				return false;
+			}
 
 			HeaderBucket bucket;
 			if (!headers.TryGetValue (name, out bucket)) {
@@ -277,8 +338,30 @@ namespace System.Net.Http.Headers
 				return false;
 			}
 
-			values = GetAllHeaderValues (bucket, header_info);
+			values = GetAllHeaderValues (bucket, headerInfo);
 			return true;
+		}
+
+		public override string ToString ()
+		{
+			var sb = new StringBuilder ();
+			foreach (var entry in this) {
+				sb.Append (entry.Key);
+				sb.Append (": ");
+
+				bool first = true;
+				foreach (var v in entry.Value) {
+					if (!first)
+						sb.Append (", ");
+
+					sb.Append (v);
+					first = false;
+				}
+
+				sb.Append ("\r\n");
+			}
+
+			return sb.ToString ();
 		}
 
 		internal void AddOrRemove (string name, string value)
@@ -299,10 +382,15 @@ namespace System.Net.Http.Headers
 
 		internal void AddOrRemove<T> (string name, T? value) where T : struct
 		{
+			AddOrRemove<T> (name, value, null);
+		}
+
+		internal void AddOrRemove<T> (string name, T? value, Func<object, string> converter) where T : struct
+		{
 			if (!value.HasValue)
 				Remove (name);
 			else
-				SetValue (name, value);
+				SetValue (name, value, converter);
 		}
 
 		List<string> GetAllHeaderValues (HeaderBucket bucket, HeaderInfo headerInfo)
@@ -312,7 +400,7 @@ namespace System.Net.Http.Headers
 				string_values = headerInfo.ToStringCollection (bucket.Parsed);
 			} else {
 				if (bucket.Parsed != null) {
-					string s = bucket.Parsed.ToString ();
+					string s = bucket.ParsedToString ();
 					if (!string.IsNullOrEmpty (s)) {
 						string_values = new List<string> ();
 						string_values.Add (s);
@@ -330,6 +418,18 @@ namespace System.Net.Http.Headers
 			return string_values;
 		}
 
+		internal static HttpHeaderKind GetKnownHeaderKind (string name)
+		{
+			if (string.IsNullOrEmpty (name))
+				throw new ArgumentException ("name");
+
+			HeaderInfo headerInfo;
+			if (known_headers.TryGetValue (name, out headerInfo))
+				return headerInfo.HeaderKind;
+
+			return HttpHeaderKind.None;
+		}
+
 		internal T GetValue<T> (string name)
 		{
 			HeaderBucket value;
@@ -337,11 +437,19 @@ namespace System.Net.Http.Headers
 			if (!headers.TryGetValue (name, out value))
 				return default (T);
 
-			var res = (T) value.Parsed;
-			if (value.HasStringValues && typeof (T) == typeof (string) && (object) res == null)
-				res = (T) (object) value.Values[0];
+			if (value.HasStringValues) {
+				var hinfo = known_headers[name];
 
-			return res;
+				object pvalue;
+				if (!hinfo.TryParse (value.Values [0], out pvalue)) {
+					return typeof (T) == typeof (string) ? (T) (object) value.Values[0] : default (T);
+				}
+
+				value.Parsed = pvalue;
+				value.Values = null;
+			}
+
+			return (T) value.Parsed;
 		}
 
 		internal HttpHeaderValueCollection<T> GetValues<T> (string name) where T : class
@@ -355,12 +463,15 @@ namespace System.Net.Http.Headers
 
 			if (value.HasStringValues) {
 				var hinfo = known_headers[name];
+				if (value.Parsed == null)
+					value.Parsed = hinfo.CreateCollection (this);
+
 				object pvalue;
 				for (int i = 0; i < value.Values.Count; ++i) {
 					if (!hinfo.TryParse (value.Values[i], out pvalue))
 						continue;
 
-					hinfo.AddToCollection (value, pvalue);
+					hinfo.AddToCollection (value.Parsed, pvalue);
 					value.Values.RemoveAt (i);
 					--i;
 				}
@@ -369,9 +480,9 @@ namespace System.Net.Http.Headers
 			return (HttpHeaderValueCollection<T>) value.Parsed;
 		}
 
-		void SetValue<T> (string name, T value)
+		void SetValue<T> (string name, T value, Func<object, string> toStringConverter = null)
 		{
-			headers[name] = new HeaderBucket (value);
+			headers[name] = new HeaderBucket (value, toStringConverter);
 		}
 	}
 }

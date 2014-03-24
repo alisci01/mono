@@ -36,47 +36,69 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Net;
 using System.Linq;
+using System.IO;
 
 namespace MonoTests.System.Net.Http
 {
 	[TestFixture]
-	[Ignore]
 	public class HttpClientTest
 	{
 		class HttpMessageHandlerMock : HttpMessageHandler
 		{
-			public Func<HttpRequestMessage, HttpResponseMessage> OnSend;
-			public Func<HttpRequestMessage, CancellationToken, HttpResponseMessage> OnSendFull;
-			public Func<HttpRequestMessage, Task<HttpResponseMessage>> OnSendAsync;
+			public Func<HttpRequestMessage, Task<HttpResponseMessage>> OnSend;
+			public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> OnSendFull;
 
 			public HttpMessageHandlerMock ()
 			{
 			}
 
-			protected override HttpResponseMessage Send (HttpRequestMessage request, CancellationToken cancellationToken)
+			protected override Task<HttpResponseMessage> SendAsync (HttpRequestMessage request, CancellationToken cancellationToken)
 			{
 				if (OnSend != null)
 					return OnSend (request);
 
 				if (OnSendFull != null)
-				    return OnSendFull (request, cancellationToken);
+					return OnSendFull (request, cancellationToken);
 
 				Assert.Fail ("Send");
 				return null;
 			}
+		}
+
+		class HttpClientHandlerMock : HttpClientHandler
+		{
+			public Func<HttpRequestMessage, Task<HttpResponseMessage>> OnSend;
+			public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> OnSendFull;
 
 			protected override Task<HttpResponseMessage> SendAsync (HttpRequestMessage request, CancellationToken cancellationToken)
 			{
-				if (OnSendAsync != null)
-					return OnSendAsync (request);
-				
-				Assert.Fail ("SendAsync");
+				if (OnSend != null)
+					return OnSend (request);
+
+				if (OnSendFull != null)
+					return OnSendFull (request, cancellationToken);
+
+				Assert.Fail ("Send");
 				return null;
 			}
 		}
 
-		static readonly string TestHost = "localhost:810";
-		static readonly string LocalServer = string.Format ("http://{0}/", TestHost);
+		const int WaitTimeout = 2500;
+
+		string port, TestHost, LocalServer;
+
+		[SetUp]
+		public void SetupFixture ()
+		{
+			if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
+				port = "810";
+			} else {
+				port = "8810";
+			}
+
+			TestHost = "localhost:" + port;
+			LocalServer = string.Format ("http://{0}/", TestHost);
+		}
 
 		[Test]
 		public void Ctor_Default ()
@@ -84,7 +106,7 @@ namespace MonoTests.System.Net.Http
 			var client = new HttpClient ();
 			Assert.IsNull (client.BaseAddress, "#1");
 			Assert.IsNotNull (client.DefaultRequestHeaders, "#2");	// TODO: full check
-			Assert.AreEqual (0x10000, client.MaxResponseContentBufferSize, "#3");
+			Assert.AreEqual (int.MaxValue, client.MaxResponseContentBufferSize, "#3");
 			Assert.AreEqual (TimeSpan.FromSeconds (100), client.Timeout, "#4");
 		}
 
@@ -102,11 +124,11 @@ namespace MonoTests.System.Net.Http
 				Assert.IsTrue (c.WaitHandle.WaitOne (1000), "#20");
 				Assert.IsTrue (c.IsCancellationRequested, "#21");
 				mre.Set ();
-				return new HttpResponseMessage ();
+				return Task.FromResult (new HttpResponseMessage ());
 			};
 
 			var t = Task.Factory.StartNew (() => {
-				client.Send (request);
+				client.SendAsync (request).Wait (WaitTimeout);
 			});
 
 			Assert.IsTrue (mre.WaitOne (500), "#1");
@@ -117,10 +139,10 @@ namespace MonoTests.System.Net.Http
 			request = new HttpRequestMessage (HttpMethod.Get, "http://xamarin.com");
 			mh.OnSendFull = (l, c) => {
 				Assert.IsFalse (c.IsCancellationRequested, "#30");
-				return new HttpResponseMessage ();
+				return Task.FromResult (new HttpResponseMessage ());
 			};
 
-			client.Send (request);
+			client.SendAsync (request).Wait (WaitTimeout);
 		}
 
 		[Test]
@@ -139,13 +161,13 @@ namespace MonoTests.System.Net.Http
 
 			mh.OnSendFull = (l, c) => {
 				Assert.IsFalse (c.IsCancellationRequested, "#30");
-				return new HttpResponseMessage ();
+				return Task.FromResult (new HttpResponseMessage ());
 			};
 
-			client.Send (request);
+			client.SendAsync (request).Wait (WaitTimeout);
 
 			request = new HttpRequestMessage (HttpMethod.Get, "http://xamarin.com");
-			client.Send (request);
+			client.SendAsync (request).Wait (WaitTimeout);
 		}
 
 		[Test]
@@ -191,10 +213,10 @@ namespace MonoTests.System.Net.Http
 			mh.OnSend = l => {
 				Assert.AreEqual (l, request, "#2");
 				Assert.AreEqual (client.BaseAddress, l.RequestUri, "#2");
-				return response;
+				return Task.FromResult (response);
 			};
 
-			Assert.AreEqual (response, client.Send (request), "#1");
+			Assert.AreEqual (response, client.SendAsync (request).Result, "#1");
 		}
 
 		[Test]
@@ -211,46 +233,51 @@ namespace MonoTests.System.Net.Http
 			mh.OnSend = l => {
 				Assert.AreEqual (client.DefaultRequestHeaders.Referrer, l.Headers.Referrer, "#2");
 				Assert.IsNotNull (l.Headers.Referrer, "#3");
-				return response;
+				return Task.FromResult (response);
 			};
 
-			Assert.AreEqual (response, client.Send (request), "#1");
+			Assert.AreEqual (response, client.SendAsync (request).Result, "#1");
 		}
 
 		[Test]
 		public void Send_Complete_Default ()
 		{
+			bool? failed = null;
 			var listener = CreateListener (l => {
-				var request = l.Request;
-
-				Assert.IsNull (request.AcceptTypes, "#1");
-				Assert.AreEqual (0, request.ContentLength64, "#2");
-				Assert.IsNull (request.ContentType, "#3");
-				Assert.AreEqual (0, request.Cookies.Count, "#4");
-				Assert.IsFalse (request.HasEntityBody, "#5");
-				Assert.AreEqual (2, request.Headers.Count, "#6");
-				Assert.AreEqual ("Keep-Alive", request.Headers["Connection"], "#6a");
-				Assert.AreEqual (TestHost, request.Headers["Host"], "#6b");
-				Assert.AreEqual ("GET", request.HttpMethod, "#7");
-				Assert.IsFalse (request.IsAuthenticated, "#8");
-				Assert.IsTrue (request.IsLocal, "#9");
-				Assert.IsFalse (request.IsSecureConnection, "#10");
-				Assert.IsFalse (request.IsWebSocketRequest, "#11");
-				Assert.IsTrue (request.KeepAlive, "#12");
-				Assert.AreEqual (HttpVersion.Version11, request.ProtocolVersion, "#13");
-				Assert.IsNull (request.ServiceName, "#14");
-				Assert.IsNull (request.UrlReferrer, "#15");
-				Assert.IsNull (request.UserAgent, "#16");
-				Assert.IsNull (request.UserLanguages, "#17");
+				try {
+					var request = l.Request;
+	
+					Assert.IsNull (request.AcceptTypes, "#1");
+					Assert.AreEqual (0, request.ContentLength64, "#2");
+					Assert.IsNull (request.ContentType, "#3");
+					Assert.AreEqual (0, request.Cookies.Count, "#4");
+					Assert.IsFalse (request.HasEntityBody, "#5");
+					Assert.AreEqual (TestHost, request.Headers["Host"], "#6b");
+					Assert.AreEqual ("GET", request.HttpMethod, "#7");
+					Assert.IsFalse (request.IsAuthenticated, "#8");
+					Assert.IsTrue (request.IsLocal, "#9");
+					Assert.IsFalse (request.IsSecureConnection, "#10");
+					Assert.IsFalse (request.IsWebSocketRequest, "#11");
+					Assert.IsTrue (request.KeepAlive, "#12");
+					Assert.AreEqual (HttpVersion.Version11, request.ProtocolVersion, "#13");
+					Assert.IsNull (request.ServiceName, "#14");
+					Assert.IsNull (request.UrlReferrer, "#15");
+					Assert.IsNull (request.UserAgent, "#16");
+					Assert.IsNull (request.UserLanguages, "#17");
+					failed = false;
+				} catch {
+					failed = true;
+				}
 			});
 
 			try {
 				var client = new HttpClient ();
 				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
-				var response = client.Send (request, HttpCompletionOption.ResponseHeadersRead);
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
-				Assert.AreEqual ("", response.Content.ReadAsString (), "#100");
+				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
 				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
+				Assert.AreEqual (false, failed, "#102");
 			} finally {
 				listener.Close ();
 			}
@@ -259,37 +286,45 @@ namespace MonoTests.System.Net.Http
 		[Test]
 		public void Send_Complete_Version_1_0 ()
 		{
+			bool? failed = null;
+			
 			var listener = CreateListener (l => {
-				var request = l.Request;
-
-				Assert.IsNull (request.AcceptTypes, "#1");
-				Assert.AreEqual (0, request.ContentLength64, "#2");
-				Assert.IsNull (request.ContentType, "#3");
-				Assert.AreEqual (0, request.Cookies.Count, "#4");
-				Assert.IsFalse (request.HasEntityBody, "#5");
-				Assert.AreEqual (1, request.Headers.Count, "#6");
-				Assert.AreEqual (TestHost, request.Headers["Host"], "#6a");
-				Assert.AreEqual ("GET", request.HttpMethod, "#7");
-				Assert.IsFalse (request.IsAuthenticated, "#8");
-				Assert.IsTrue (request.IsLocal, "#9");
-				Assert.IsFalse (request.IsSecureConnection, "#10");
-				Assert.IsFalse (request.IsWebSocketRequest, "#11");
-				Assert.IsFalse (request.KeepAlive, "#12");
-				Assert.AreEqual (HttpVersion.Version10, request.ProtocolVersion, "#13");
-				Assert.IsNull (request.ServiceName, "#14");
-				Assert.IsNull (request.UrlReferrer, "#15");
-				Assert.IsNull (request.UserAgent, "#16");
-				Assert.IsNull (request.UserLanguages, "#17");
+				try {
+					var request = l.Request;
+	
+					Assert.IsNull (request.AcceptTypes, "#1");
+					Assert.AreEqual (0, request.ContentLength64, "#2");
+					Assert.IsNull (request.ContentType, "#3");
+					Assert.AreEqual (0, request.Cookies.Count, "#4");
+					Assert.IsFalse (request.HasEntityBody, "#5");
+					Assert.AreEqual (1, request.Headers.Count, "#6");
+					Assert.AreEqual (TestHost, request.Headers["Host"], "#6a");
+					Assert.AreEqual ("GET", request.HttpMethod, "#7");
+					Assert.IsFalse (request.IsAuthenticated, "#8");
+					Assert.IsTrue (request.IsLocal, "#9");
+					Assert.IsFalse (request.IsSecureConnection, "#10");
+					Assert.IsFalse (request.IsWebSocketRequest, "#11");
+					Assert.IsFalse (request.KeepAlive, "#12");
+					Assert.AreEqual (HttpVersion.Version10, request.ProtocolVersion, "#13");
+					Assert.IsNull (request.ServiceName, "#14");
+					Assert.IsNull (request.UrlReferrer, "#15");
+					Assert.IsNull (request.UserAgent, "#16");
+					Assert.IsNull (request.UserLanguages, "#17");
+					failed = false;
+				} catch {
+					failed = true;
+				}
 			});
 
 			try {
 				var client = new HttpClient ();
 				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
 				request.Version = HttpVersion.Version10;
-				var response = client.Send (request, HttpCompletionOption.ResponseHeadersRead);
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
-				Assert.AreEqual ("", response.Content.ReadAsString (), "#100");
+				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
 				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
+				Assert.AreEqual (false, failed, "#102");
 			} finally {
 				listener.Close ();
 			}
@@ -298,30 +333,37 @@ namespace MonoTests.System.Net.Http
 		[Test]
 		public void Send_Complete_ClientHandlerSettings ()
 		{
+			bool? failed = null;
+			
 			var listener = CreateListener (l => {
 				var request = l.Request;
-
-				Assert.IsNull (request.AcceptTypes, "#1");
-				Assert.AreEqual (0, request.ContentLength64, "#2");
-				Assert.IsNull (request.ContentType, "#3");
-				Assert.AreEqual (1, request.Cookies.Count, "#4");
-				Assert.AreEqual (new Cookie ("mycookie", "vv"), request.Cookies[0], "#4a");
-				Assert.IsFalse (request.HasEntityBody, "#5");
-				Assert.AreEqual (3, request.Headers.Count, "#6");
-				Assert.AreEqual (TestHost, request.Headers["Host"], "#6a");
-				Assert.AreEqual ("gzip", request.Headers["Accept-Encoding"], "#6b");
-				Assert.AreEqual ("mycookie=vv", request.Headers["Cookie"], "#6c");
-				Assert.AreEqual ("GET", request.HttpMethod, "#7");
-				Assert.IsFalse (request.IsAuthenticated, "#8");
-				Assert.IsTrue (request.IsLocal, "#9");
-				Assert.IsFalse (request.IsSecureConnection, "#10");
-				Assert.IsFalse (request.IsWebSocketRequest, "#11");
-				Assert.IsFalse (request.KeepAlive, "#12");
-				Assert.AreEqual (HttpVersion.Version10, request.ProtocolVersion, "#13");
-				Assert.IsNull (request.ServiceName, "#14");
-				Assert.IsNull (request.UrlReferrer, "#15");
-				Assert.IsNull (request.UserAgent, "#16");
-				Assert.IsNull (request.UserLanguages, "#17");
+				
+				try {
+					Assert.IsNull (request.AcceptTypes, "#1");
+					Assert.AreEqual (0, request.ContentLength64, "#2");
+					Assert.IsNull (request.ContentType, "#3");
+					Assert.AreEqual (1, request.Cookies.Count, "#4");
+					Assert.AreEqual (new Cookie ("mycookie", "vv"), request.Cookies[0], "#4a");
+					Assert.IsFalse (request.HasEntityBody, "#5");
+					Assert.AreEqual (4, request.Headers.Count, "#6");
+					Assert.AreEqual (TestHost, request.Headers["Host"], "#6a");
+					Assert.AreEqual ("gzip", request.Headers["Accept-Encoding"], "#6b");
+					Assert.AreEqual ("mycookie=vv", request.Headers["Cookie"], "#6c");
+					Assert.AreEqual ("GET", request.HttpMethod, "#7");
+					Assert.IsFalse (request.IsAuthenticated, "#8");
+					Assert.IsTrue (request.IsLocal, "#9");
+					Assert.IsFalse (request.IsSecureConnection, "#10");
+					Assert.IsFalse (request.IsWebSocketRequest, "#11");
+					Assert.IsTrue (request.KeepAlive, "#12");
+					Assert.AreEqual (HttpVersion.Version10, request.ProtocolVersion, "#13");
+					Assert.IsNull (request.ServiceName, "#14");
+					Assert.IsNull (request.UrlReferrer, "#15");
+					Assert.IsNull (request.UserAgent, "#16");
+					Assert.IsNull (request.UserLanguages, "#17");
+					failed = false;
+				} catch {
+					failed = true;
+				}
 			});
 
 			try {
@@ -340,11 +382,14 @@ namespace MonoTests.System.Net.Http
 				var client = new HttpClient (chandler);
 				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
 				request.Version = HttpVersion.Version10;
-				var response = client.Send (request, HttpCompletionOption.ResponseHeadersRead);
+				request.Headers.Add ("Keep-Alive", "false");
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
-				Assert.AreEqual ("", response.Content.ReadAsString (), "#100");
+				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
 				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
+				Assert.AreEqual (false, failed, "#102");
 			} finally {
+				listener.Abort ();
 				listener.Close ();
 			}
 		}
@@ -352,34 +397,39 @@ namespace MonoTests.System.Net.Http
 		[Test]
 		public void Send_Complete_CustomHeaders ()
 		{
+			bool? failed = null;
+			
 			var listener = CreateListener (l => {
 				var request = l.Request;
-				Assert.AreEqual ("vv", request.Headers["aa"], "#1");
-//				Assert.AreEqual ("bytes=3-20", request.Headers["Range"], "#2");
-//				Assert.AreEqual (4, request.Headers.Count, "#3");
-
-				var response = l.Response;
-				response.Headers.Add ("rsp", "rrr");
-				response.Headers.Add ("upgrade", "vvvvaa");
-				response.Headers.Add ("date", "aa");
-				response.Headers.Add ("cache-control", "audio");
-
-				response.StatusDescription = "test description";
-				response.ProtocolVersion = HttpVersion.Version10;
-				response.SendChunked = true;
-				response.RedirectLocation = "w3.org";
+				try {
+					Assert.AreEqual ("vv", request.Headers["aa"], "#1");
+	
+					var response = l.Response;
+					response.Headers.Add ("rsp", "rrr");
+					response.Headers.Add ("upgrade", "vvvvaa");
+					response.Headers.Add ("Date", "aa");
+					response.Headers.Add ("cache-control", "audio");
+	
+					response.StatusDescription = "test description";
+					response.ProtocolVersion = HttpVersion.Version10;
+					response.SendChunked = true;
+					response.RedirectLocation = "w3.org";
+					
+					failed = false;
+				} catch {
+					failed = true;
+				}
 			});
 
 			try {
 				var client = new HttpClient ();
 				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
-				request.Headers.AddWithoutValidation ("aa", "vv");
-//				request.Headers.Range = new RangeHeaderValue (3, 20);
-				var response = client.Send (request, HttpCompletionOption.ResponseHeadersRead);
+				Assert.IsTrue (request.Headers.TryAddWithoutValidation ("aa", "vv"), "#0");
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
-//				Assert.AreEqual ("", response.Content.ReadAsString (), "#100");
+				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
 				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
-
+				
 				IEnumerable<string> values;
 				Assert.IsTrue (response.Headers.TryGetValues ("rsp", out values), "#102");
 				Assert.AreEqual ("rrr", values.First (), "#102a");
@@ -389,8 +439,9 @@ namespace MonoTests.System.Net.Http
 				Assert.AreEqual (true, response.Headers.TransferEncodingChunked, "#103b");
 
 				Assert.IsTrue (response.Headers.TryGetValues ("Date", out values), "#104");
-				Assert.AreEqual (2, values.Count (), "#104b");
-				Assert.IsNull (response.Headers.Date, "#104c");
+				Assert.AreEqual (1, values.Count (), "#104b");
+				// .NET overwrites Date, Mono does not
+				// Assert.IsNotNull (response.Headers.Date, "#104c");
 
 				Assert.AreEqual (new ProductHeaderValue ("vvvvaa"), response.Headers.Upgrade.First (), "#105");
 
@@ -400,6 +451,83 @@ namespace MonoTests.System.Net.Http
 
 				Assert.AreEqual ("test description", response.ReasonPhrase, "#110");
 				Assert.AreEqual (HttpVersion.Version11, response.Version, "#111");
+				
+				Assert.AreEqual (false, failed, "#112");
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		public void Send_Complete_Content ()
+		{
+			var listener = CreateListener (l => {
+				var request = l.Request;
+				l.Response.OutputStream.WriteByte (55);
+				l.Response.OutputStream.WriteByte (75);
+			});
+
+			try {
+				var client = new HttpClient ();
+				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				Assert.IsTrue (request.Headers.TryAddWithoutValidation ("aa", "vv"), "#0");
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
+
+				Assert.AreEqual ("7K", response.Content.ReadAsStringAsync ().Result, "#100");
+				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
+
+				IEnumerable<string> values;
+				Assert.IsTrue (response.Headers.TryGetValues ("Transfer-Encoding", out values), "#102");
+				Assert.AreEqual ("chunked", values.First (), "#102a");
+				Assert.AreEqual (true, response.Headers.TransferEncodingChunked, "#102b");
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		public void Send_Complete_Content_MaxResponseContentBufferSize ()
+		{
+			var listener = CreateListener (l => {
+				var request = l.Request;
+				var b = new byte[4000];
+				l.Response.OutputStream.Write (b, 0, b.Length);
+			});
+
+			try {
+				var client = new HttpClient ();
+				client.MaxResponseContentBufferSize = 1000;
+				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
+
+				Assert.AreEqual (4000, response.Content.ReadAsStringAsync ().Result.Length, "#100");
+				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		public void Send_Complete_Content_MaxResponseContentBufferSize_Error ()
+		{
+			var listener = CreateListener (l => {
+				var request = l.Request;
+				var b = new byte[4000];
+				l.Response.OutputStream.Write (b, 0, b.Length);
+			});
+
+			try {
+				var client = new HttpClient ();
+				client.MaxResponseContentBufferSize = 1000;
+				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+
+				try {
+					client.SendAsync (request, HttpCompletionOption.ResponseContentRead).Wait (WaitTimeout);
+					Assert.Fail ("#2");
+				} catch (AggregateException e) {
+					Assert.IsTrue (e.InnerException is HttpRequestException, "#3");
+				}
+
 			} finally {
 				listener.Close ();
 			}
@@ -416,11 +544,55 @@ namespace MonoTests.System.Net.Http
 			try {
 				var client = new HttpClient ();
 				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
-				var response = client.Send (request, HttpCompletionOption.ResponseHeadersRead);
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
-				Assert.AreEqual ("", response.Content.ReadAsString (), "#100");
+				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
 				Assert.AreEqual (HttpStatusCode.InternalServerError, response.StatusCode, "#101");
 			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		public void Send_Content_Get ()
+		{
+			var listener = CreateListener (l => {
+				var request = l.Request;
+				l.Response.OutputStream.WriteByte (72);
+			});
+
+			try {
+				var client = new HttpClient ();
+				var r = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var response = client.SendAsync (r).Result;
+
+				Assert.AreEqual ("H", response.Content.ReadAsStringAsync ().Result);
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		public void Send_Content_Put ()
+		{
+			bool passed = false;
+			var listener = CreateListener (l => {
+				var request = l.Request;
+				passed = 7 == request.ContentLength64;
+				passed &= request.ContentType == "text/plain; charset=utf-8";
+				passed &= request.InputStream.ReadByte () == 'm';
+			});
+
+			try {
+				var client = new HttpClient ();
+				var r = new HttpRequestMessage (HttpMethod.Put, LocalServer);
+				r.Content = new StringContent ("my text");
+				var response = client.SendAsync (r).Result;
+
+				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#1");
+				Assert.IsTrue (passed, "#2");
+			} finally {
+				listener.Abort ();
 				listener.Close ();
 			}
 		}
@@ -437,10 +609,10 @@ namespace MonoTests.System.Net.Http
 
 			mh.OnSendFull = (l, c) => {
 				Assert.IsTrue (c.WaitHandle.WaitOne (500), "#2");
-				return response;
+				return Task.FromResult (response);
 			};
 
-			Assert.AreEqual (response, client.Send (request), "#1");
+			Assert.AreEqual (response, client.SendAsync (request).Result, "#1");
 		}
 
 		[Test]
@@ -448,14 +620,14 @@ namespace MonoTests.System.Net.Http
 		{
 			var client = new HttpClient ();
 			try {
-				client.Send (null);
+				client.SendAsync (null).Wait (WaitTimeout);
 				Assert.Fail ("#1");
 			} catch (ArgumentNullException) {
 			}
 
 			try {
 				var request = new HttpRequestMessage ();
-				client.Send (request);
+				client.SendAsync (request).Wait (WaitTimeout);
 				Assert.Fail ("#2");
 			} catch (InvalidOperationException) {
 			}
@@ -476,9 +648,10 @@ namespace MonoTests.System.Net.Http
 			};
 
 			try {
-				client.Send (request);
+				// Broken by design
+				client.SendAsync (request).Wait (WaitTimeout);
 				Assert.Fail ("#2");
-			} catch (InvalidOperationException) {
+			} catch (Exception) {
 			}
 		}
 
@@ -490,21 +663,143 @@ namespace MonoTests.System.Net.Http
 			var client = new HttpClient (mh);
 			var request = new HttpRequestMessage (HttpMethod.Get, "http://xamarin.com");
 
-			mh.OnSend = l => {
-				return new HttpResponseMessage ();
-			};
+			mh.OnSend = l => Task.FromResult (new HttpResponseMessage ());
 
-			client.Send (request);
+			client.SendAsync (request).Wait (WaitTimeout);
 			try {
-				client.Send (request);
+				client.SendAsync (request).Wait (WaitTimeout);
+				Assert.Fail ("#1");
 			} catch (InvalidOperationException) {
 			}
 		}
 
-		static HttpListener CreateListener (Action<HttpListenerContext> contextAssert)
+		[Test]
+		public void GetString_RelativeUri ()
+		{
+			var client = new HttpClient ();
+			client.BaseAddress = new Uri ("http://en.wikipedia.org/wiki/");
+			var uri = new Uri ("Computer", UriKind.Relative);
+
+			Assert.That (client.GetStringAsync (uri).Result != null);
+			Assert.That (client.GetStringAsync ("Computer").Result != null);
+		}
+
+		[Test]
+		[Category ("MobileNotWorking")] // Missing encoding
+		public void GetString_Many ()
+		{
+			var client = new HttpClient ();
+			var t1 = client.GetStringAsync ("http://www.google.com");
+			var t2 = client.GetStringAsync ("http://www.google.com");
+			Assert.IsTrue (Task.WaitAll (new [] { t1, t2 }, WaitTimeout));		
+		}
+
+		[Test]
+		public void GetByteArray_ServerError ()
+		{
+			var listener = CreateListener (l => {
+				var response = l.Response;
+				response.StatusCode = 500;
+				l.Response.OutputStream.WriteByte (72);
+			});
+
+			try {
+				var client = new HttpClient ();
+				try {
+					client.GetByteArrayAsync (LocalServer).Wait (WaitTimeout);
+					Assert.Fail ("#1");
+				} catch (AggregateException e) {
+					Assert.IsTrue (e.InnerException is HttpRequestException , "#2");
+				}
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		public void DisallowAutoRedirect ()
+		{
+			var listener = CreateListener (l => {
+				var request = l.Request;
+				var response = l.Response;
+				
+				response.StatusCode = (int)HttpStatusCode.Moved;
+				response.RedirectLocation = "http://xamarin.com/";
+			});
+
+			try {
+				var chandler = new HttpClientHandler ();
+				chandler.AllowAutoRedirect = false;
+				var client = new HttpClient (chandler);
+
+				try {
+					client.GetStringAsync (LocalServer).Wait (WaitTimeout);
+					Assert.Fail ("#1");
+				} catch (AggregateException e) {
+					Assert.IsTrue (e.InnerException is HttpRequestException, "#2");
+				}
+			} finally {
+				listener.Abort ();
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		/*
+		 * Properties may only be modified before sending the first request.
+		 */
+		public void ModifyHandlerAfterFirstRequest ()
+		{
+			var chandler = new HttpClientHandler ();
+			chandler.AllowAutoRedirect = true;
+			var client = new HttpClient (chandler, true);
+
+			var listener = CreateListener (l => {
+				var response = l.Response;
+				response.StatusCode = 200;
+				response.OutputStream.WriteByte (55);
+			});
+
+			try {
+				client.GetStringAsync (LocalServer).Wait (WaitTimeout);
+				try {
+					chandler.AllowAutoRedirect = false;
+					Assert.Fail ("#1");
+				} catch (InvalidOperationException) {
+					;
+				}
+			} finally {
+				listener.Abort ();
+				listener.Close ();
+			}
+		}
+
+		[Test]
+		/*
+		 * However, this policy is not enforced for custom handlers and there
+		 * is also no way a derived class could tell its HttpClientHandler parent
+		 * that it just sent a request.
+		 * 
+		 */
+		public void ModifyHandlerAfterFirstRequest_Mock ()
+		{
+			var ch = new HttpClientHandlerMock ();
+			ch.AllowAutoRedirect = true;
+
+			var client = new HttpClient (ch);
+
+			ch.OnSend = (l) => {
+				return Task.FromResult (new HttpResponseMessage ());
+			};
+
+			client.GetAsync ("http://xamarin.com").Wait (WaitTimeout);
+			ch.AllowAutoRedirect = false;
+		}
+
+		HttpListener CreateListener (Action<HttpListenerContext> contextAssert)
 		{
 			var l = new HttpListener ();
-			l.Prefixes.Add ("http://+:810/");
+			l.Prefixes.Add (string.Format ("http://+:{0}/", port));
 			l.Start ();
 			l.BeginGetContext (ar => {
 				var ctx = l.EndGetContext (ar);

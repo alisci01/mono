@@ -50,7 +50,7 @@ namespace Mono.CSharp
 		{
 		}
 
-		public override void Error_ValueCannotBeConverted (ResolveContext ec, Location loc, TypeSpec t, bool expl)
+		public override void Error_ValueCannotBeConverted (ResolveContext ec, TypeSpec t, bool expl)
 		{
 			if (t.IsGenericParameter) {
 				ec.Report.Error(403, loc,
@@ -61,11 +61,11 @@ namespace Mono.CSharp
 
 			if (TypeSpec.IsValueType (t)) {
 				ec.Report.Error(37, loc, "Cannot convert null to `{0}' because it is a value type",
-					TypeManager.CSharpName(t));
+					t.GetSignatureForError ());
 				return;
 			}
 
-			base.Error_ValueCannotBeConverted (ec, loc, t, expl);
+			base.Error_ValueCannotBeConverted (ec, t, expl);
 		}
 
 		public override string GetValueAsLiteral ()
@@ -253,7 +253,7 @@ namespace Mono.CSharp
 		{
 		}
 
-		public override void Error_ValueCannotBeConverted (ResolveContext ec, Location loc, TypeSpec target, bool expl)
+		public override void Error_ValueCannotBeConverted (ResolveContext ec, TypeSpec target, bool expl)
 		{
 			if (target.BuiltinType == BuiltinTypeSpec.Type.Float) {
 				Error_664 (ec, loc, "float", "f");
@@ -265,7 +265,7 @@ namespace Mono.CSharp
 				return;
 			}
 
-			base.Error_ValueCannotBeConverted (ec, loc, target, expl);
+			base.Error_ValueCannotBeConverted (ec, target, expl);
 		}
 
 		static void Error_664 (ResolveContext ec, Location loc, string type, string suffix)

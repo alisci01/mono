@@ -36,10 +36,33 @@ namespace System.Net.Http.Headers
 	{
 		public static bool SequenceEqual<TSource> (this List<TSource> first, List<TSource> second)
 		{
-			if (first == null || second == null)
-				return first == second;
+			if (first == null)
+				return second == null || second.Count == 0;
+
+			if (second == null)
+				return first == null || first.Count == 0;
 
 			return Enumerable.SequenceEqual (first, second);
+		}
+
+		public static void SetValue (this List<NameValueHeaderValue> parameters, string key, string value)
+		{
+			for (int i = 0; i < parameters.Count; ++i) {
+				var entry = parameters[i];
+				if (!string.Equals (entry.Name, key, StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				if (value == null) {
+					parameters.RemoveAt (i);
+				} else {
+					parameters[i].Value = value;
+				}
+
+				return;
+			}
+
+			if (!string.IsNullOrEmpty (value))
+				parameters.Add (new NameValueHeaderValue (key, value));
 		}
 
 		public static string ToString<T> (this List<T> list)
@@ -51,14 +74,27 @@ namespace System.Net.Http.Headers
 
 			var sb = new StringBuilder ();
 			for (int i = 0; i < list.Count; ++i) {
-				if (i > 0) {
-					sb.Append (separator);
-				}
-
+				sb.Append (separator);
 				sb.Append (list [i]);
 			}
 
 			return sb.ToString ();
+		}
+
+		public static void ToStringBuilder<T> (this List<T> list, StringBuilder sb)
+		{
+			if (list == null || list.Count == 0)
+				return;
+
+			const string separator = ", ";
+
+			for (int i = 0; i < list.Count; ++i) {
+				if (i > 0) {
+					sb.Append (separator);
+				}
+
+				sb.Append (list[i]);
+			}
 		}
 	}
 }

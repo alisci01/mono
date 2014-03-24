@@ -53,42 +53,22 @@ namespace System.Net.Configuration {
 
 namespace System.Net 
 {
-#if MOONLIGHT
-	internal abstract class WebRequest : ISerializable {
-#else
 	[Serializable]
 	public abstract class WebRequest : MarshalByRefObject, ISerializable {
-#endif
 		static HybridDictionary prefixes = new HybridDictionary ();
 		static bool isDefaultWebProxySet;
 		static IWebProxy defaultWebProxy;
 		static RequestCachePolicy defaultCachePolicy;
-		static MethodInfo cfGetDefaultProxy;
-		
-		// Constructors
-		
+
 		static WebRequest ()
 		{
-			if (Platform.IsMacOS) {
-#if MONOTOUCH
-				Type type = Type.GetType ("MonoTouch.CoreFoundation.CFNetwork, monotouch");
-#else
-				Type type = Type.GetType ("MonoMac.CoreFoundation.CFNetwork, monomac");
-#endif
-				if (type != null)
-					cfGetDefaultProxy = type.GetMethod ("GetDefaultProxy");
-			}
-			
-#if NET_2_1
+#if MOBILE
 			IWebRequestCreate http = new HttpRequestCreator ();
 			RegisterPrefix ("http", http);
 			RegisterPrefix ("https", http);
-	#if MOBILE
 			RegisterPrefix ("file", new FileWebRequestCreator ());
 			RegisterPrefix ("ftp", new FtpRequestCreator ());
-	#endif
 #else
-			defaultCachePolicy = new HttpRequestCachePolicy (HttpRequestCacheLevel.NoCacheNoStore);
 	#if CONFIGURATION_DEP
 			object cfg = ConfigurationManager.GetSection ("system.net/webRequestModules");
 			WebRequestModulesSection s = cfg as WebRequestModulesSection;
@@ -129,14 +109,6 @@ namespace System.Net
 				authentication_level = value;
 			}
 		}
-
-		[MonoTODO ("Implement the caching system. Currently always returns a policy with the NoCacheNoStore level")]
-		public virtual RequestCachePolicy CachePolicy
-		{
-			get { return DefaultCachePolicy; }
-			set {
-			}
-		}
 		
 		public virtual string ConnectionGroupName {
 			get { throw GetMustImplement (); }
@@ -158,9 +130,18 @@ namespace System.Net
 			set { throw GetMustImplement (); }
 		}
 
-		public static RequestCachePolicy DefaultCachePolicy
+		[MonoTODO ("Implement the caching system. Currently always returns a policy with the NoCacheNoStore level")]
+		public virtual RequestCachePolicy CachePolicy
 		{
-			get { return defaultCachePolicy; }
+			get { return DefaultCachePolicy; }
+			set {
+			}
+		}
+		
+		public static RequestCachePolicy DefaultCachePolicy {
+			get {
+				return defaultCachePolicy ?? (defaultCachePolicy = new HttpRequestCachePolicy (HttpRequestCacheLevel.NoCacheNoStore));
+			}
 			set {
 				throw GetMustImplement ();
 			}
@@ -171,12 +152,7 @@ namespace System.Net
 			set { throw GetMustImplement (); }
 		}
 		
-#if !MOONLIGHT
-		public TokenImpersonationLevel ImpersonationLevel {
-			get { throw GetMustImplement (); }
-			set { throw GetMustImplement (); }
-		}
-#endif
+
 		public virtual string Method { 
 			get { throw GetMustImplement (); }
 			set { throw GetMustImplement (); }
@@ -210,7 +186,9 @@ namespace System.Net
 				throw GetMustImplement ();
 			}
 		}
-		
+
+		public TokenImpersonationLevel ImpersonationLevel { get; set; }
+
 //		volatile static IWebProxy proxy;
 		static readonly object lockobj = new object ();
 		
@@ -246,9 +224,14 @@ namespace System.Net
 			
 			ProxyElement pe = sec.Proxy;
 			
-			if ((pe.UseSystemDefault != ProxyElement.UseSystemDefaultValues.False) && (pe.ProxyAddress == null))
-				p = (WebProxy) GetSystemWebProxy ();
-			else
+			if ((pe.UseSystemDefault != ProxyElement.UseSystemDefaultValues.False) && (pe.ProxyAddress == null)) {
+				IWebProxy proxy = GetSystemWebProxy ();
+				
+				if (!(proxy is WebProxy))
+					return proxy;
+				
+				p = (WebProxy) proxy;
+			} else
 				p = new WebProxy ();
 			
 			if (pe.ProxyAddress != null)
@@ -303,7 +286,29 @@ namespace System.Net
 				throw new ArgumentNullException ("requestUri");
 			return GetCreator (requestUri.Scheme).Create (requestUri);
 		}
+#if NET_4_0
+		static HttpWebRequest SharedCreateHttp (Uri uri)
+		{
+			if (uri.Scheme != "http" && uri.Scheme != "https")
+				throw new NotSupportedException	("The uri should start with http or https");
 
+			return new HttpWebRequest (uri);
+		}
+
+		public static HttpWebRequest CreateHttp (string requestUriString)
+		{
+			if (requestUriString == null)
+				throw new ArgumentNullException ("requestUriString");
+			return SharedCreateHttp (new Uri (requestUriString));
+		}
+			
+		public static HttpWebRequest CreateHttp (Uri requestUri)
+		{
+			if (requestUri == null)
+				throw new ArgumentNullException ("requestUri");
+			return SharedCreateHttp (requestUri);
+		}
+#endif
 		public virtual Stream EndGetRequestStream (IAsyncResult asyncResult)
 		{
 			throw GetMustImplement ();
@@ -327,6 +332,15 @@ namespace System.Net
 		[MonoTODO("Look in other places for proxy config info")]
 		public static IWebProxy GetSystemWebProxy ()
 		{
+#if MONOTOUCH
+			return CFNetwork.GetDefaultProxy ();
+#else
+#if MONODROID
+			// Return the system web proxy.  This only works for ICS+.
+			var androidProxy = AndroidPlatform.GetDefaultProxy ();
+			if (androidProxy != null)
+				return androidProxy;
+#endif
 #if !NET_2_1
 			if (IsWindows ()) {
 				int iProxyEnable = (int)Microsoft.Win32.Registry.GetValue ("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "ProxyEnable", 0);
@@ -362,6 +376,9 @@ namespace System.Net
 				}
 			} else {
 #endif
+				if (Platform.IsMacOS)
+					return CFNetwork.GetDefaultProxy ();
+				
 				string address = Environment.GetEnvironmentVariable ("http_proxy");
 
 				if (address == null)
@@ -413,10 +430,8 @@ namespace System.Net
 			}
 #endif
 			
-			if (cfGetDefaultProxy != null)
-				return (IWebProxy) cfGetDefaultProxy.Invoke (null, null);
-			
 			return new WebProxy ();
+#endif // MONOTOUCH
 		}
 
 		void ISerializable.GetObjectData (SerializationInfo serializationInfo, StreamingContext streamingContext)

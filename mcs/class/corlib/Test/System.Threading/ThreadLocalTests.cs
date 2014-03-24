@@ -29,8 +29,10 @@ using System;
 using System.Threading;
 
 using NUnit;
-using NUnit.Core;
 using NUnit.Framework;
+#if !MOBILE
+using NUnit.Framework.SyntaxHelpers;
+#endif
 
 namespace MonoTests.System.Threading
 {
@@ -70,7 +72,6 @@ namespace MonoTests.System.Threading
 			threadLocal = new ThreadLocal<int> (() => {
 					Interlocked.Increment (ref callTime);
 					throw new ApplicationException ("foo");
-					return 43;
 				});
 
 			Exception exception = null;
@@ -82,7 +83,7 @@ namespace MonoTests.System.Threading
 			}
 
 			Assert.IsNotNull (exception, "#1");
-			Assert.IsInstanceOfType (typeof (ApplicationException), exception, "#2");
+			Assert.That (exception, Is.TypeOf (typeof (ApplicationException)), "#2");
 			Assert.AreEqual (1, callTime, "#3");
 
 			exception = null;
@@ -94,7 +95,7 @@ namespace MonoTests.System.Threading
 			}
 
 			Assert.IsNotNull (exception, "#4");
-			Assert.IsInstanceOfType (typeof (ApplicationException), exception, "#5");
+			Assert.That (exception, Is.TypeOf (typeof (ApplicationException)), "#5");
 			Assert.AreEqual (1, callTime, "#6");
 		}
 
@@ -162,7 +163,7 @@ namespace MonoTests.System.Threading
 			t.Join ();
 			Assert.AreEqual (false, thread_value_created, "#4");
 			Assert.IsNotNull (exception, "#5");
-			Assert.IsInstanceOfType (typeof (ApplicationException), exception, "#6");
+			Assert.That (exception, Is.TypeOf (typeof (ApplicationException)), "#6");
 		}
 
 		void AssertThreadLocal ()

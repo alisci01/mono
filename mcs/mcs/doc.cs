@@ -32,6 +32,7 @@ namespace Mono.CSharp
 		readonly XmlDocument XmlDocumentation;
 
 		readonly ModuleContainer module;
+		readonly ModuleContainer doc_module;
 
 		//
 		// The output for XML documentation.
@@ -46,8 +47,13 @@ namespace Mono.CSharp
 		//
 		Dictionary<string, XmlDocument> StoredDocuments = new Dictionary<string, XmlDocument> ();
 
+		ParserSession session;
+
 		public DocumentationBuilder (ModuleContainer module)
 		{
+			doc_module = new ModuleContainer (module.Compiler);
+			doc_module.DocumentationBuilder = this;
+
 			this.module = module;
 			XmlDocumentation = new XmlDocument ();
 			XmlDocumentation.PreserveWhitespace = false;
@@ -141,16 +147,13 @@ namespace Mono.CSharp
 				}
 
 				// FIXME: it could be done with XmlReader
-				DeclSpace ds_target = mc as DeclSpace;
-				if (ds_target == null)
-					ds_target = mc.Parent;
 
 				foreach (XmlElement see in n.SelectNodes (".//see"))
-					HandleSee (mc, ds_target, see);
+					HandleSee (mc, see);
 				foreach (XmlElement seealso in n.SelectNodes (".//seealso"))
-					HandleSeeAlso (mc, ds_target, seealso);
+					HandleSeeAlso (mc, seealso);
 				foreach (XmlElement see in n.SelectNodes (".//exception"))
-					HandleException (mc, ds_target, see);
+					HandleException (mc, see);
 				foreach (XmlElement node in n.SelectNodes (".//typeparam"))
 					HandleTypeParam (mc, node);
 				foreach (XmlElement node in n.SelectNodes (".//typeparamref"))
@@ -169,28 +172,31 @@ namespace Mono.CSharp
 			bool keep_include_node = false;
 			string file = el.GetAttribute ("file");
 			string path = el.GetAttribute ("path");
+
 			if (file == "") {
 				Report.Warning (1590, 1, mc.Location, "Invalid XML `include' element. Missing `file' attribute");
 				el.ParentNode.InsertBefore (el.OwnerDocument.CreateComment (" Include tag is invalid "), el);
 				keep_include_node = true;
-			}
-			else if (path.Length == 0) {
+			} else if (path.Length == 0) {
 				Report.Warning (1590, 1, mc.Location, "Invalid XML `include' element. Missing `path' attribute");
 				el.ParentNode.InsertBefore (el.OwnerDocument.CreateComment (" Include tag is invalid "), el);
 				keep_include_node = true;
-			}
-			else {
+			} else {
 				XmlDocument doc;
-				if (!StoredDocuments.TryGetValue (file, out doc)) {
+				Exception exception = null;
+				var full_path = Path.Combine (Path.GetDirectoryName (mc.Location.NameFullPath), file);
+
+				if (!StoredDocuments.TryGetValue (full_path, out doc)) {
 					try {
 						doc = new XmlDocument ();
-						doc.Load (file);
-						StoredDocuments.Add (file, doc);
-					} catch (Exception) {
+						doc.Load (full_path);
+						StoredDocuments.Add (full_path, doc);
+					} catch (Exception e) {
+						exception = e;
 						el.ParentNode.InsertBefore (el.OwnerDocument.CreateComment (String.Format (" Badly formed XML in at comment file `{0}': cannot be included ", file)), el);
-						Report.Warning (1592, 1, mc.Location, "Badly formed XML in included comments file -- `{0}'", file);
 					}
 				}
+
 				if (doc != null) {
 					try {
 						XmlNodeList nl = doc.SelectNodes (path);
@@ -202,52 +208,56 @@ namespace Mono.CSharp
 						foreach (XmlNode n in nl)
 							el.ParentNode.InsertBefore (el.OwnerDocument.ImportNode (n, true), el);
 					} catch (Exception ex) {
+						exception = ex;
 						el.ParentNode.InsertBefore (el.OwnerDocument.CreateComment (" Failed to insert some or all of included XML "), el);
-						Report.Warning (1589, 1, mc.Location, "Unable to include XML fragment `{0}' of file `{1}' ({2})", path, file, ex.Message);
 					}
 				}
+
+				if (exception != null) {
+					Report.Warning (1589, 1, mc.Location, "Unable to include XML fragment `{0}' of file `{1}'. {2}",
+						path, file, exception.Message);
+				}
 			}
+
 			return keep_include_node;
 		}
 
 		//
 		// Handles <see> elements.
 		//
-		void HandleSee (MemberCore mc, DeclSpace ds, XmlElement see)
+		void HandleSee (MemberCore mc, XmlElement see)
 		{
-			HandleXrefCommon (mc, ds, see);
+			HandleXrefCommon (mc, see);
 		}
 
 		//
 		// Handles <seealso> elements.
 		//
-		void HandleSeeAlso (MemberCore mc, DeclSpace ds, XmlElement seealso)
+		void HandleSeeAlso (MemberCore mc, XmlElement seealso)
 		{
-			HandleXrefCommon (mc, ds, seealso);
+			HandleXrefCommon (mc, seealso);
 		}
 
 		//
 		// Handles <exception> elements.
 		//
-		void HandleException (MemberCore mc, DeclSpace ds, XmlElement seealso)
+		void HandleException (MemberCore mc, XmlElement seealso)
 		{
-			HandleXrefCommon (mc, ds, seealso);
+			HandleXrefCommon (mc, seealso);
 		}
 
 		//
 		// Handles <typeparam /> node
 		//
-		void HandleTypeParam (MemberCore mc, XmlElement node)
+		static void HandleTypeParam (MemberCore mc, XmlElement node)
 		{
 			if (!node.HasAttribute ("name"))
 				return;
 
 			string tp_name = node.GetAttribute ("name");
 			if (mc.CurrentTypeParameters != null) {
-				foreach (var tp in mc.CurrentTypeParameters) {
-					if (tp.Name == tp_name)
-						return;
-				}
+				if (mc.CurrentTypeParameters.Find (tp_name) != null)
+					return;
 			}
 			
 			// TODO: CS1710, CS1712
@@ -260,7 +270,7 @@ namespace Mono.CSharp
 		//
 		// Handles <typeparamref /> node
 		//
-		void HandleTypeParamRef (MemberCore mc, XmlElement node)
+		static void HandleTypeParamRef (MemberCore mc, XmlElement node)
 		{
 			if (!node.HasAttribute ("name"))
 				return;
@@ -269,10 +279,8 @@ namespace Mono.CSharp
 			var member = mc;
 			do {
 				if (member.CurrentTypeParameters != null) {
-					foreach (var tp in member.CurrentTypeParameters) {
-						if (tp.Name == tp_name)
-							return;
-					}
+					if (member.CurrentTypeParameters.Find (tp_name) != null)
+						return;
 				}
 
 				member = member.Parent;
@@ -289,7 +297,7 @@ namespace Mono.CSharp
 				return context.LookupNamespaceOrType (mn.Name, mn.Arity, LookupMode.Probing, Location.Null);
 
 			var left = ResolveMemberName (context, mn.Left);
-			var ns = left as Namespace;
+			var ns = left as NamespaceExpression;
 			if (ns != null)
 				return ns.LookupTypeOrNamespace (context, mn.Name, mn.Arity, LookupMode.Probing, Location.Null);
 
@@ -308,7 +316,7 @@ namespace Mono.CSharp
 		//
 		// Processes "see" or "seealso" elements from cref attribute.
 		//
-		void HandleXrefCommon (MemberCore mc, DeclSpace ds, XmlElement xref)
+		void HandleXrefCommon (MemberCore mc, XmlElement xref)
 		{
 			string cref = xref.GetAttribute ("cref");
 			// when, XmlReader, "if (cref == null)"
@@ -324,15 +332,18 @@ namespace Mono.CSharp
 
 			var encoding = module.Compiler.Settings.Encoding;
 			var s = new MemoryStream (encoding.GetBytes (cref));
-			SeekableStreamReader seekable = new SeekableStreamReader (s, encoding);
 
-			var source_file = new CompilationSourceFile ("{documentation}", "", 1);
-			var doc_module = new ModuleContainer (module.Compiler);
-			doc_module.DocumentationBuilder = this;
-			source_file.NamespaceContainer = new NamespaceContainer (null, doc_module, null, source_file);
+			var source_file = new CompilationSourceFile (doc_module, mc.Location.SourceFile);
+			var report = new Report (doc_module.Compiler, new NullReportPrinter ());
 
-			Report parse_report = new Report (new NullReportPrinter ());
-			var parser = new CSharpParser (seekable, source_file, parse_report);
+			if (session == null)
+				session = new ParserSession {
+					UseJayGlobalArrays = true
+				};
+
+			SeekableStreamReader seekable = new SeekableStreamReader (s, encoding, session.StreamReaderBuffer);
+
+			var parser = new CSharpParser (seekable, source_file, report, session);
 			ParsedParameters = null;
 			ParsedName = null;
 			ParsedBuiltinType = null;
@@ -340,7 +351,7 @@ namespace Mono.CSharp
 			parser.Lexer.putback_char = Tokenizer.DocumentationXref;
 			parser.Lexer.parsing_generic_declaration_doc = true;
 			parser.parse ();
-			if (parse_report.Errors > 0) {
+			if (report.Errors > 0) {
 				Report.Warning (1584, 1, mc.Location, "XML comment on `{0}' has syntactically incorrect cref attribute `{1}'",
 					mc.GetSignatureForError (), cref);
 
@@ -372,7 +383,7 @@ namespace Mono.CSharp
 					} else if (ParsedName.Left != null) {
 						fne = ResolveMemberName (mc, ParsedName.Left);
 						if (fne != null) {
-							var ns = fne as Namespace;
+							var ns = fne as NamespaceExpression;
 							if (ns != null) {
 								fne = ns.LookupTypeOrNamespace (mc, ParsedName.Name, ParsedName.Arity, LookupMode.Probing, Location.Null);
 								if (fne != null) {
@@ -400,10 +411,15 @@ namespace Mono.CSharp
 
 				if (ParsedParameters != null) {
 					var old_printer = mc.Module.Compiler.Report.SetPrinter (new NullReportPrinter ());
-					foreach (var pp in ParsedParameters) {
-						pp.Resolve (mc);
+					try {
+						var context = new DocumentationMemberContext (mc, ParsedName ?? MemberName.Null);
+
+						foreach (var pp in ParsedParameters) {
+							pp.Resolve (context);
+						}
+					} finally {
+						mc.Module.Compiler.Report.SetPrinter (old_printer);
 					}
-					mc.Module.Compiler.Report.SetPrinter (old_printer);
 				}
 
 				if (type != null) {
@@ -436,13 +452,15 @@ namespace Mono.CSharp
 									if (m.Kind == MemberKind.Operator && !ParsedOperator.HasValue)
 										continue;
 
+									var pm_params = pm.Parameters;
+
 									int i;
 									for (i = 0; i < parsed_param_count; ++i) {
 										var pparam = ParsedParameters[i];
 
-										if (i >= pm.Parameters.Count || pparam == null ||
-											pparam.TypeSpec != pm.Parameters.Types[i] ||
-											(pparam.Modifier & Parameter.Modifier.SignatureMask) != (pm.Parameters.FixedParameters[i].ModFlags & Parameter.Modifier.SignatureMask)) {
+										if (i >= pm_params.Count || pparam == null || pparam.TypeSpec == null ||
+											!TypeSpecComparer.Override.IsEqual (pparam.TypeSpec, pm_params.Types[i]) ||
+											(pparam.Modifier & Parameter.Modifier.RefOutMask) != (pm_params.FixedParameters[i].ModFlags & Parameter.Modifier.RefOutMask)) {
 
 											if (i > parameters_match) {
 												parameters_match = i;
@@ -462,7 +480,7 @@ namespace Mono.CSharp
 											continue;
 										}
 									} else {
-										if (parsed_param_count != pm.Parameters.Count)
+										if (parsed_param_count != pm_params.Count)
 											continue;
 									}
 								}
@@ -612,6 +630,97 @@ namespace Mono.CSharp
 				if (w != null)
 					w.Close ();
 			}
+		}
+	}
+
+	//
+	// Type lookup of documentation references uses context of type where
+	// the reference is used but type parameters from cref value
+	//
+	sealed class DocumentationMemberContext : IMemberContext
+	{
+		readonly MemberCore host;
+		MemberName contextName;
+
+		public DocumentationMemberContext (MemberCore host, MemberName contextName)
+		{
+			this.host = host;
+			this.contextName = contextName;
+		}
+
+		public TypeSpec CurrentType {
+			get {
+				return host.CurrentType;
+			}
+		}
+
+		public TypeParameters CurrentTypeParameters {
+			get {
+				return contextName.TypeParameters;
+			}
+		}
+
+		public MemberCore CurrentMemberDefinition {
+			get {
+				return host.CurrentMemberDefinition;
+			}
+		}
+
+		public bool IsObsolete {
+			get {
+				return false;
+			}
+		}
+
+		public bool IsUnsafe {
+			get {
+				return host.IsStatic;
+			}
+		}
+
+		public bool IsStatic {
+			get {
+				return host.IsStatic;
+			}
+		}
+
+		public ModuleContainer Module {
+			get {
+				return host.Module;
+			}
+		}
+
+		public string GetSignatureForError ()
+		{
+			return host.GetSignatureForError ();
+		}
+
+		public ExtensionMethodCandidates LookupExtensionMethod (TypeSpec extensionType, string name, int arity)
+		{
+			return null;
+		}
+
+		public FullNamedExpression LookupNamespaceOrType (string name, int arity, LookupMode mode, Location loc)
+		{
+			if (arity == 0) {
+				var tp = CurrentTypeParameters;
+				if (tp != null) {
+					for (int i = 0; i < tp.Count; ++i) {
+						var t = tp[i];
+						if (t.Name == name) {
+							t.Type.DeclaredPosition = i;
+							return new TypeParameterExpr (t, loc);
+						}
+					}
+				}
+			}
+
+			return host.Parent.LookupNamespaceOrType (name, arity, mode, loc);
+		}
+
+		public FullNamedExpression LookupNamespaceAlias (string name)
+		{
+			throw new NotImplementedException ();
 		}
 	}
 

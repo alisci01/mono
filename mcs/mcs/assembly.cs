@@ -7,7 +7,7 @@
 //
 // Copyright 2001, 2002, 2003 Ximian, Inc.
 // Copyright 2004-2011 Novell, Inc.
-// Copyright 2011 Xamarin Inc
+// Copyright 2011-2013 Xamarin Inc
 //
 
 
@@ -36,7 +36,6 @@ namespace Mono.CSharp
 	public interface IAssemblyDefinition
 	{
 		string FullName { get; }
-		bool HasExtensionMethod { get; }
 		bool IsCLSCompliant { get; }
 		bool IsMissing { get; }
 		string Name { get; }
@@ -50,11 +49,12 @@ namespace Mono.CSharp
 		// TODO: make it private and move all builder based methods here
 		public AssemblyBuilder Builder;
 		protected AssemblyBuilderExtension builder_extra;
-		MonoSymbolWriter symbol_writer;
+		MonoSymbolFile symbol_writer;
 
 		bool is_cls_compliant;
 		bool wrap_non_exception_throws;
 		bool wrap_non_exception_throws_custom;
+		bool has_user_debuggable;
 
 		protected ModuleContainer module;
 		readonly string name;
@@ -74,6 +74,9 @@ namespace Mono.CSharp
 		SecurityType declarative_security;
 		Dictionary<ITypeDefinition, Attribute> emitted_forwarders;
 		AssemblyAttributesPlaceholder module_target_attrs;
+
+		// Win32 version info values
+		string vi_product, vi_product_version, vi_company, vi_copyright, vi_trademark;
 
 		protected AssemblyDefinition (ModuleContainer module, string name)
 		{
@@ -132,12 +135,6 @@ namespace Mono.CSharp
 			}
 		}
 
-		public bool HasExtensionMethod {
-			get {
-				return module.HasExtensionMethod;
-			}
-		}
-
 		public bool HasCLSCompliantAttribute {
 			get {
 				return cls_attribute != null;
@@ -161,6 +158,8 @@ namespace Mono.CSharp
 			}
 		}
 
+		public bool IsSatelliteAssembly { get; private set; }
+
 		public string Name {
 			get {
 				return name;
@@ -176,6 +175,12 @@ namespace Mono.CSharp
 		protected Report Report {
 			get {
 				return Compiler.Report;
+			}
+		}
+
+		public MonoSymbolFile SymbolWriter {
+			get {
+				return symbol_writer;
 			}
 		}
 
@@ -215,6 +220,7 @@ namespace Mono.CSharp
 					builder_extra.SetCulture (value, a.Location);
 				}
 
+				IsSatelliteAssembly = true;
 				return;
 			}
 
@@ -286,7 +292,7 @@ namespace Mono.CSharp
 				} else if (emitted_forwarders.ContainsKey (t.MemberDefinition)) {
 					Report.SymbolRelatedToPreviousError (emitted_forwarders[t.MemberDefinition].Location, null);
 					Report.Error (739, a.Location, "A duplicate type forward of type `{0}'",
-						TypeManager.CSharpName (t));
+						t.GetSignatureForError ());
 					return;
 				}
 
@@ -295,13 +301,13 @@ namespace Mono.CSharp
 				if (t.MemberDefinition.DeclaringAssembly == this) {
 					Report.SymbolRelatedToPreviousError (t);
 					Report.Error (729, a.Location, "Cannot forward type `{0}' because it is defined in this assembly",
-						TypeManager.CSharpName (t));
+						t.GetSignatureForError ());
 					return;
 				}
 
 				if (t.IsNested) {
 					Report.Error (730, a.Location, "Cannot forward type `{0}' because it is a nested type",
-						TypeManager.CSharpName (t));
+						t.GetSignatureForError ());
 					return;
 				}
 
@@ -345,14 +351,25 @@ namespace Mono.CSharp
 			} else if (a.Type == pa.RuntimeCompatibility) {
 				wrap_non_exception_throws_custom = true;
 			} else if (a.Type == pa.AssemblyFileVersion) {
-				string value = a.GetString ();
-				if (string.IsNullOrEmpty (value) || IsValidAssemblyVersion (value, false) == null) {
+				vi_product_version = a.GetString ();
+				if (string.IsNullOrEmpty (vi_product_version) || IsValidAssemblyVersion (vi_product_version, false) == null) {
 					Report.Warning (1607, 1, a.Location, "The version number `{0}' specified for `{1}' is invalid",
-						value, a.Name);
+						vi_product_version, a.Name);
 					return;
 				}
+			} else if (a.Type == pa.AssemblyProduct) {
+				vi_product = a.GetString ();
+			} else if (a.Type == pa.AssemblyCompany) {
+				vi_company = a.GetString ();
+			} else if (a.Type == pa.AssemblyDescription) {
+				// TODO: Needs extra api
+			} else if (a.Type == pa.AssemblyCopyright) {
+				vi_copyright = a.GetString ();
+			} else if (a.Type == pa.AssemblyTrademark) {
+				vi_trademark = a.GetString ();
+			} else if (a.Type == pa.Debuggable) {
+				has_user_debuggable = true;
 			}
-
 
 			SetCustomAttribute (ctor, cdata);
 		}
@@ -368,7 +385,7 @@ namespace Mono.CSharp
 			// no working SRE API
 			foreach (var entry in Importer.Assemblies) {
 				var a = entry as ImportedAssemblyDefinition;
-				if (a == null)
+				if (a == null || a.IsMissing)
 					continue;
 
 				if (public_key != null && !a.HasStrongName) {
@@ -437,8 +454,8 @@ namespace Mono.CSharp
 		{
 			if (Compiler.Settings.Target == Target.Module) {
 				module_target_attrs = new AssemblyAttributesPlaceholder (module, name);
-				module_target_attrs.CreateType ();
-				module_target_attrs.DefineType ();
+				module_target_attrs.CreateContainer ();
+				module_target_attrs.DefineContainer ();
 				module_target_attrs.Define ();
 				module.AddCompilerGeneratedClass (module_target_attrs);
 			} else if (added_modules != null) {
@@ -446,18 +463,10 @@ namespace Mono.CSharp
 			}
 
 			if (Compiler.Settings.GenerateDebugInfo) {
-				symbol_writer = new MonoSymbolWriter (file_name);
-
-				// Register all source files with symbol writer
-				foreach (var source in Compiler.SourceFiles) {
-					source.DefineSymbolInfo (symbol_writer);
-				}
-
-				// TODO: global variables
-				SymbolWriter.symwriter = symbol_writer;
+				symbol_writer = new MonoSymbolFile ();
 			}
 
-			module.Emit ();
+			module.EmitContainer ();
 
 			if (module.HasExtensionMethod) {
 				var pa = module.PredefinedAttributes.Extension;
@@ -466,30 +475,39 @@ namespace Mono.CSharp
 				}
 			}
 
-			if (!wrap_non_exception_throws_custom) {
-				PredefinedAttribute pa = module.PredefinedAttributes.RuntimeCompatibility;
-				if (pa.IsDefined && pa.ResolveBuilder ()) {
-					var prop = module.PredefinedMembers.RuntimeCompatibilityWrapNonExceptionThrows.Get ();
-					if (prop != null) {
-						AttributeEncoder encoder = new AttributeEncoder ();
-						encoder.EncodeNamedPropertyArgument (prop, new BoolLiteral (Compiler.BuiltinTypes, true, Location.Null));
-						SetCustomAttribute (pa.Constructor, encoder.ToArray ());
+			if (!IsSatelliteAssembly) {
+				if (!has_user_debuggable && Compiler.Settings.GenerateDebugInfo) {
+					var pa = module.PredefinedAttributes.Debuggable;
+					if (pa.IsDefined) {
+						var modes = System.Diagnostics.DebuggableAttribute.DebuggingModes.IgnoreSymbolStoreSequencePoints;
+						if (!Compiler.Settings.Optimize)
+							modes |= System.Diagnostics.DebuggableAttribute.DebuggingModes.DisableOptimizations;
+
+						pa.EmitAttribute (Builder, modes);
 					}
 				}
-			}
 
-			if (declarative_security != null) {
-#if STATIC
-				foreach (var entry in declarative_security) {
-					Builder.__AddDeclarativeSecurity (entry);
+				if (!wrap_non_exception_throws_custom) {
+					PredefinedAttribute pa = module.PredefinedAttributes.RuntimeCompatibility;
+					if (pa.IsDefined && pa.ResolveBuilder ()) {
+						var prop = module.PredefinedMembers.RuntimeCompatibilityWrapNonExceptionThrows.Get ();
+						if (prop != null) {
+							AttributeEncoder encoder = new AttributeEncoder ();
+							encoder.EncodeNamedPropertyArgument (prop, new BoolLiteral (Compiler.BuiltinTypes, true, Location.Null));
+							SetCustomAttribute (pa.Constructor, encoder.ToArray ());
+						}
+					}
 				}
+
+				if (declarative_security != null) {
+#if STATIC
+					foreach (var entry in declarative_security) {
+						Builder.__AddDeclarativeSecurity (entry);
+					}
 #else
-				var args = new PermissionSet[3];
-				declarative_security.TryGetValue (SecurityAction.RequestMinimum, out args[0]);
-				declarative_security.TryGetValue (SecurityAction.RequestOptional, out args[1]);
-				declarative_security.TryGetValue (SecurityAction.RequestRefuse, out args[2]);
-				builder_extra.AddPermissionRequests (args);
+					throw new NotSupportedException ("Assembly-level security");
 #endif
+				}
 			}
 
 			CheckReferencesPublicToken ();
@@ -630,9 +648,16 @@ namespace Mono.CSharp
 					new MemberAccess (system_security_permissions, "SecurityPermissionAttribute"),
 					new Arguments[] { pos, named }, loc, false);
 				g.AttachTo (module, module);
-				var ctor = g.Resolve ();
-				if (ctor != null) {
-					g.ExtractSecurityPermissionSet (ctor, ref declarative_security);
+
+				// Disable no-location warnings (e.g. obsolete) for compiler generated attribute
+				Compiler.Report.DisableReporting ();
+				try {
+					var ctor = g.Resolve ();
+					if (ctor != null) {
+						g.ExtractSecurityPermissionSet (ctor, ref declarative_security);
+					}
+				} finally {
+					Compiler.Report.EnableReporting ();
 				}
 			}
 
@@ -750,7 +775,7 @@ namespace Mono.CSharp
 			if (Compiler.Settings.Win32ResourceFile != null) {
 				Builder.DefineUnmanagedResource (Compiler.Settings.Win32ResourceFile);
 			} else {
-				Builder.DefineVersionInfoResource ();
+				Builder.DefineVersionInfoResource (vi_product, vi_product_version, vi_company, vi_copyright, vi_trademark);
 			}
 
 			if (Compiler.Settings.Win32IconFile != null) {
@@ -790,25 +815,38 @@ namespace Mono.CSharp
 
 		public void Save ()
 		{
-			PortableExecutableKinds pekind;
+			PortableExecutableKinds pekind = PortableExecutableKinds.ILOnly;
 			ImageFileMachine machine;
 
 			switch (Compiler.Settings.Platform) {
 			case Platform.X86:
-				pekind = PortableExecutableKinds.Required32Bit | PortableExecutableKinds.ILOnly;
+				pekind |= PortableExecutableKinds.Required32Bit;
 				machine = ImageFileMachine.I386;
 				break;
 			case Platform.X64:
-				pekind = PortableExecutableKinds.ILOnly;
+				pekind |= PortableExecutableKinds.PE32Plus;
 				machine = ImageFileMachine.AMD64;
 				break;
 			case Platform.IA64:
-				pekind = PortableExecutableKinds.ILOnly;
 				machine = ImageFileMachine.IA64;
 				break;
+			case Platform.AnyCPU32Preferred:
+#if STATIC
+				pekind |= PortableExecutableKinds.Preferred32Bit;
+				machine = ImageFileMachine.I386;
+				break;
+#else
+				throw new NotSupportedException ();
+#endif
+			case Platform.Arm:
+#if STATIC
+				machine = ImageFileMachine.ARM;
+				break;
+#else
+				throw new NotSupportedException ();
+#endif
 			case Platform.AnyCPU:
 			default:
-				pekind = PortableExecutableKinds.ILOnly;
 				machine = ImageFileMachine.I386;
 				break;
 			}
@@ -829,7 +867,21 @@ namespace Mono.CSharp
 			if (symbol_writer != null && Compiler.Report.Errors == 0) {
 				// TODO: it should run in parallel
 				Compiler.TimeReporter.Start (TimeReporter.TimerType.DebugSave);
-				symbol_writer.WriteSymbolFile (SymbolWriter.GetGuid (module.Builder));
+
+				var filename = file_name + ".mdb";
+				try {
+					// We mmap the file, so unlink the previous version since it may be in use
+					File.Delete (filename);
+				} catch {
+					// We can safely ignore
+				}
+
+				module.WriteDebugSymbol (symbol_writer);
+
+				using (FileStream fs = new FileStream (filename, FileMode.Create, FileAccess.Write)) {
+					symbol_writer.CreateSymbolFile (module.Builder.ModuleVersionId, fs);
+				}
+
 				Compiler.TimeReporter.Stop (TimeReporter.TimerType.DebugSave);
 			}
 		}
@@ -881,7 +933,7 @@ namespace Mono.CSharp
 						return;
 					}
 
-					var mtype = texpr.Type.MemberDefinition as ClassOrStruct;
+					var mtype = texpr.MemberDefinition as ClassOrStruct;
 					if (mtype == null) {
 						Report.Error (1556, "`{0}' specified for Main method must be a valid class or struct", main_class);
 						return;
@@ -989,7 +1041,7 @@ namespace Mono.CSharp
 	//
 	// A placeholder class for assembly attributes when emitting module
 	//
-	class AssemblyAttributesPlaceholder : CompilerGeneratedClass
+	class AssemblyAttributesPlaceholder : CompilerGeneratedContainer
 	{
 		static readonly string TypeNamePrefix = "<$AssemblyAttributes${0}>";
 		public static readonly string AssemblyFieldName = "attributes";
@@ -997,7 +1049,7 @@ namespace Mono.CSharp
 		Field assembly;
 
 		public AssemblyAttributesPlaceholder (ModuleContainer parent, string outputName)
-			: base (parent, new MemberName (GetGeneratedName (outputName)), Modifiers.STATIC)
+			: base (parent, new MemberName (GetGeneratedName (outputName)), Modifiers.STATIC | Modifiers.INTERNAL)
 		{
 			assembly = new Field (this, new TypeExpression (parent.Compiler.BuiltinTypes.Object, Location), Modifiers.PUBLIC | Modifiers.STATIC,
 				new MemberName (AssemblyFieldName), null);
@@ -1072,19 +1124,19 @@ namespace Mono.CSharp
 		}
 	}
 
-	abstract class AssemblyReferencesLoader<T>
+	abstract class AssemblyReferencesLoader<T> where T : class
 	{
 		protected readonly CompilerContext compiler;
 
 		protected readonly List<string> paths;
 
-		public AssemblyReferencesLoader (CompilerContext compiler)
+		protected AssemblyReferencesLoader (CompilerContext compiler)
 		{
 			this.compiler = compiler;
 
 			paths = new List<string> ();
-			paths.AddRange (compiler.Settings.ReferencesLookupPaths);
 			paths.Add (Directory.GetCurrentDirectory ());
+			paths.AddRange (compiler.Settings.ReferencesLookupPaths);
 		}
 
 		public abstract bool HasObjectType (T assembly);
@@ -1141,13 +1193,25 @@ namespace Mono.CSharp
 				if (loaded.Contains (key))
 					continue;
 
-				// A corlib assembly is the first assembly which contains System.Object
-				if (corlib_assembly == null && HasObjectType (a)) {
-					corlib_assembly = a;
-					continue;
-				}
-
 				loaded.Add (key);
+			}
+
+			if (corlib_assembly == null) {
+				//
+				// Requires second pass because HasObjectType can trigger assembly load event
+				//
+				for (int i = 0; i < loaded.Count; ++i) {
+					var assembly = loaded [i];
+
+					//
+					// corlib assembly is the first referenced assembly which contains System.Object
+					//
+					if (HasObjectType (assembly.Item2)) {
+						corlib_assembly = assembly.Item2;
+						loaded.RemoveAt (i);
+						break;
+					}
+				}
 			}
 
 			foreach (var entry in module.Compiler.Settings.AssemblyReferencesAliases) {

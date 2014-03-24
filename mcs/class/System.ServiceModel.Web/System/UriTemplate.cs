@@ -33,10 +33,6 @@ using System.Collections.Specialized;
 using System.Globalization;
 using System.Text;
 
-#if NET_2_1
-using NameValueCollection = System.Object;
-#endif
-
 namespace System
 {
 	public class UriTemplate
@@ -108,7 +104,6 @@ namespace System
 
 		// Bind
 
-#if !MOONLIGHT
 		public Uri BindByName (Uri baseAddress, NameValueCollection parameters)
 		{
 			return BindByName (baseAddress, parameters, false);
@@ -118,7 +113,6 @@ namespace System
 		{
 			return BindByNameCommon (baseAddress, parameters, null, omitDefaults);
 		}
-#endif
 
 		public Uri BindByName (Uri baseAddress, IDictionary<string,string> parameters)
 		{
@@ -176,11 +170,8 @@ namespace System
 			foreach (string name in names) {
 				int s = template.IndexOf ('{', src);
 				int e = template.IndexOf ('}', s + 1);
-#if NET_2_1
-				string value = null;
-#else
 				string value = nvc != null ? nvc [name] : null;
-#endif
+
 				if (dic != null)
 					dic.TryGetValue (name, out value);
 
@@ -250,11 +241,17 @@ namespace System
 
 			var us = baseAddress.LocalPath;
 			if (us [us.Length - 1] != '/')
-				baseAddress = new Uri (baseAddress.GetComponents (UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.Unescaped) + '/' + baseAddress.Query, baseAddress.IsAbsoluteUri ? UriKind.Absolute : UriKind.RelativeOrAbsolute);
+				baseAddress = new Uri (
+					baseAddress.GetComponents (UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped) + '/' + baseAddress.Query,
+					baseAddress.IsAbsoluteUri ? UriKind.Absolute : UriKind.RelativeOrAbsolute
+				);
 			if (IgnoreTrailingSlash) {
 				us = candidate.LocalPath;
 				if (us.Length > 0 && us [us.Length - 1] != '/')
-					candidate = new Uri(candidate.GetComponents (UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.Unescaped) + '/' + candidate.Query, candidate.IsAbsoluteUri ? UriKind.Absolute : UriKind.RelativeOrAbsolute);
+					candidate = new Uri (
+						candidate.GetComponents (UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped) + '/' + candidate.Query,
+						candidate.IsAbsoluteUri ? UriKind.Absolute : UriKind.RelativeOrAbsolute
+					);
 			}
 
 			int i = 0, c = 0;
@@ -264,7 +261,11 @@ namespace System
 			m.RequestUri = candidate;
 			var vc = m.BoundVariables;
 
-			string cp = Uri.UnescapeDataString (baseAddress.MakeRelativeUri (new Uri (baseAddress, candidate.GetComponents (UriComponents.PathAndQuery, UriFormat.Unescaped))).ToString ());
+			string cp = baseAddress.MakeRelativeUri (new Uri (
+				baseAddress,
+				candidate.GetComponents (UriComponents.PathAndQuery, UriFormat.UriEscaped)
+			))
+				.ToString ();
 			if (IgnoreTrailingSlash && cp [cp.Length - 1] == '/')
 				cp = cp.Substring (0, cp.Length - 1);
 
@@ -279,7 +280,7 @@ namespace System
 
 			foreach (string name in path) {
 				if (name == wild_path_name) {
-					vc [name] = cp.Substring (c); // all remaining paths.
+					vc [name] = Uri.UnescapeDataString (cp.Substring (c)); // all remaining paths.
 					continue;
 				}
 				int n = StringIndexOf (template, '{' + name + '}', i);
@@ -291,10 +292,11 @@ namespace System
 				if (ce < 0)
 					ce = cp.Length;
 				string value = cp.Substring (c, ce - c);
+				string unescapedVaule = Uri.UnescapeDataString (value);
 				if (value.Length == 0)
 					return null; // empty => mismatch
-				vc [name] = value;
-				m.RelativePathSegments.Add (value);
+				vc [name] = unescapedVaule;
+				m.RelativePathSegments.Add (unescapedVaule);
 				c += value.Length;
 			}
 			int tEnd = template.IndexOf ('?');
@@ -303,7 +305,7 @@ namespace System
 			if (tEnd < 0)
 				tEnd = template.Length;
 			if (wild)
-				tEnd = wildIdx - 1;
+				tEnd = Math.Max (wildIdx - 1, 0);
 			if (!wild && (cp.Length - c) != (tEnd - i) ||
 			    String.CompareOrdinal (cp, c, template, i, tEnd - i) != 0)
 				return null; // suffix doesn't match

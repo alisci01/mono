@@ -144,6 +144,13 @@ dump_counter (MonoCounter *counter, FILE *outfile) {
 		      str = *(char**)counter->addr;
 	      fprintf (outfile, ENTRY_FMT "%s\n", counter->name, str);
 	      break;
+	case MONO_COUNTER_TIME_INTERVAL:
+	    if (counter->type & MONO_COUNTER_CALLBACK)
+		      int64val = ((LongFunc)counter->addr) ();
+	    else
+		      int64val = *(gint64*)counter->addr;
+	    fprintf (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)int64val / 1000.0);
+	    break;
 	}
 }
 
@@ -200,12 +207,12 @@ void
 mono_counters_cleanup (void)
 {
 	MonoCounter *counter = counters;
+	counters = NULL;
 	while (counter) {
-		MonoCounter *tmp = counters;
+		MonoCounter *tmp = counter;
 		counter = counter->next;
 		free (tmp);
 	}
-	counters = NULL;
 }
 
 static MonoResourceCallback limit_reached = NULL;

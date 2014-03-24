@@ -37,6 +37,7 @@
 /mconfig
 /mcs
 /mcs1
+/mdbrebase
 /mdoc
 /mdoc-*
 /mjs
@@ -66,6 +67,7 @@
 /mozroots
 /nunit-console
 /nunit-console2
+/nunit-console4
 /pdb2mdb
 /permview
 /peverify

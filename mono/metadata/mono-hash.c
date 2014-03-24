@@ -65,14 +65,6 @@ struct _MonoGHashTable {
 	MonoGHashGCType gc_type;
 };
 
-static const int prime_tbl[] = {
-	11, 19, 37, 73, 109, 163, 251, 367, 557, 823, 1237,
-	1861, 2777, 4177, 6247, 9371, 14057, 21089, 31627,
-	47431, 71143, 106721, 160073, 240101, 360163,
-	540217, 810343, 1215497, 1823231, 2734867, 4102283,
-	6153409, 9230113, 13845163
-};
-
 #ifdef HAVE_SGEN_GC
 static void *table_hash_descr = NULL;
 
@@ -137,7 +129,7 @@ mono_g_hash_table_new_type (GHashFunc hash_func, GEqualFunc key_equal_func, Mono
 	hash->gc_type = type;
 
 #ifdef HAVE_SGEN_GC
-	if (type < 0 || type > MONO_HASH_KEY_VALUE_GC)
+	if (type > MONO_HASH_KEY_VALUE_GC)
 		g_error ("wrong type for gc hashtable");
 	/*
 	 * We use a user defined marking function to avoid having to register a GC root for

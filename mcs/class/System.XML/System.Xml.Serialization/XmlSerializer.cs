@@ -250,7 +250,6 @@ namespace System.Xml.Serialization
 
 #region Events
 		private UnreferencedObjectEventHandler onUnreferencedObject;
-#if !MOONLIGHT
 		private XmlAttributeEventHandler onUnknownAttribute;
 		private XmlElementEventHandler onUnknownElement;
 		private XmlNodeEventHandler onUnknownNode;
@@ -285,8 +284,6 @@ namespace System.Xml.Serialization
 		{
 			if (onUnknownNode != null) onUnknownNode(this, e);
 		}
-
-#endif
 
 		internal virtual void OnUnreferencedObject (UnreferencedObjectEventArgs e) 
 		{
@@ -397,11 +394,11 @@ namespace System.Xml.Serialization
 			return sers;
 		}
 
-		public static XmlSerializer [] FromTypes (Type [] mappings)
+		public static XmlSerializer [] FromTypes (Type [] types)
 		{
-			XmlSerializer [] sers = new XmlSerializer [mappings.Length];
-			for (int n=0; n<mappings.Length; n++)
-				sers[n] = new XmlSerializer (mappings[n]);
+			XmlSerializer [] sers = new XmlSerializer [types.Length];
+			for (int n=0; n<types.Length; n++)
+				sers[n] = new XmlSerializer (types[n]);
 			return sers;
 		}
 
@@ -422,11 +419,7 @@ namespace System.Xml.Serialization
 			}
 		}
 
-#if MOONLIGHT
-		static Encoding DefaultEncoding = Encoding.UTF8;
-#else
 		static Encoding DefaultEncoding = Encoding.Default;
-#endif
 
 		public void Serialize (Stream stream, object o)
 		{
@@ -462,7 +455,7 @@ namespace System.Xml.Serialization
 			xmlWriter.Flush();
 		}
 
-		public void Serialize (XmlWriter writer, object o, XmlSerializerNamespaces namespaces)
+		public void Serialize (XmlWriter xmlWriter, object o, XmlSerializerNamespaces namespaces)
 		{
 			XmlSerializationWriter xsWriter;
 
@@ -483,9 +476,9 @@ namespace System.Xml.Serialization
 #endif
 				}
 
-				xsWriter.Initialize (writer, namespaces);
+				xsWriter.Initialize (xmlWriter, namespaces);
 				Serialize (o, xsWriter);
-				writer.Flush ();
+				xmlWriter.Flush ();
 			} catch (Exception ex) {
 				if (ex is TargetInvocationException)
 					ex = ex.InnerException;
@@ -497,8 +490,6 @@ namespace System.Xml.Serialization
 				throw;
 			}
 		}
-		
-#if !NET_2_1
 		
 		[MonoTODO]
 		public object Deserialize (XmlReader xmlReader, string encodingStyle, XmlDeserializationEvents events)
@@ -574,7 +565,6 @@ namespace System.Xml.Serialization
 		{
 			throw new NotImplementedException ();
 		}
-#endif
 		
 		XmlSerializationWriter CreateWriter (XmlMapping typeMapping)
 		{

@@ -45,11 +45,11 @@ net_4_0_dirs := \
 	mono-configuration-crypto \
 	ccrewrite	\
 	cccheck		\
-	security
+	security	\
+	mdbrebase
 
 net_2_0_dirs := \
-	$(per_profile_dirs) \
-	monodoc
+	$(per_profile_dirs)
 
 build_SUBDIRS = gacutil security culevel
 net_2_0_SUBDIRS := $(basic_SUBDIRS) $(net_2_0_dirs)

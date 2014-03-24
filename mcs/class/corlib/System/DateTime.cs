@@ -1,13 +1,15 @@
 //
 // System.DateTime.cs
 //
-// author:
+// Authors:
 //   Marcel Narings (marcel@narings.nl)
 //   Martin Baulig (martin@gnome.org)
 //   Atsushi Enomoto (atsushi@ximian.com)
+//   Marek Safar (marek.safar@gmail.com)
 //
 //   (C) 2001 Marcel Narings
 // Copyright (C) 2004-2006 Novell, Inc (http://www.novell.com)
+// Copyright (C) 2012 Xamarin Inc (http://www.xamarin.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -93,6 +95,7 @@ namespace System
 			"H:m:s.fffffffzzz",
 			"H:m:s.fffffff",
 			"H:m:s.ffffff",
+			"H:m:s.ffffffzzz",
 			"H:m:s.fffff",
 			"H:m:s.ffff",
 			"H:m:s.fff",
@@ -373,7 +376,7 @@ namespace System
 		DateTime (SerializationInfo info, StreamingContext context)
 		{
 			if (info.HasKey ("dateData")){
-				encoded = info.GetInt64 ("dateData");
+				encoded = (Int64)info.GetUInt64 ("dateData");
 			} else if (info.HasKey ("ticks")){
 				encoded = info.GetInt64 ("ticks") & TicksMask;
 			} else {
@@ -467,7 +470,7 @@ namespace System
 				long now = GetNow ();
 				DateTime dt = new DateTime (now);
 
-				if ((now - last_now) > TimeSpan.TicksPerMinute){
+				if (Math.Abs (now - last_now) > TimeSpan.TicksPerMinute){
 					to_local_time_span_object = TimeZone.CurrentTimeZone.GetLocalTimeDiff (dt);
 					last_now = now;
 
@@ -715,7 +718,7 @@ namespace System
 			if (fileTime < 0)
 				throw new ArgumentOutOfRangeException ("fileTime", "< 0");
 
-			return new DateTime (w32file_epoch + fileTime);
+			return new DateTime (w32file_epoch + fileTime, DateTimeKind.Utc);
 		}
 
 		public static DateTime FromOADate (double d)
@@ -1043,7 +1046,7 @@ namespace System
 			if (maxlength <= 0)
 				maxlength = value.Length;
 
-			if (sPos + maxlength <= s.Length && String.Compare (s, sPos, value, 0, maxlength, true, CultureInfo.InvariantCulture) == 0) {
+			if (sPos + maxlength <= s.Length && String.CompareOrdinalCaseInsensitive (s, sPos, value, 0, maxlength) == 0) {
 				num_parsed = maxlength;
 				return true;
 			}
@@ -1182,6 +1185,7 @@ namespace System
 			int ampm = -1;
 			int tzsign = -1, tzoffset = -1, tzoffmin = -1;
 			bool isFirstPart = true;
+			bool format_with_24_hours = false;
 
 			for (; ; )
 			{
@@ -1423,7 +1427,7 @@ namespace System
 					if (hour >= 24)
 						return false;
 
-//					ampm = -2;
+					format_with_24_hours = true;
 					break;
 				case 'm':
 					if (minute != -1)
@@ -1574,6 +1578,27 @@ namespace System
 
 					num = 0;
 					break;
+				case '.':
+					if (s[valuePos] == '.') {
+						num = 0;
+						num_parsed = 1;
+						break;
+					}
+
+					// '.FFF....' can be mapped to nothing
+					if (pos + 1 < len && chars[pos + 1] == 'F') {
+						++pos;
+						while (pos + 1 < len && chars[pos + 1] == 'F') {
+							++pos;
+						}
+
+						num = 0;
+						num_parsed = 0;
+						break;
+					}
+
+					return false;
+
 				default:
 					if (s [valuePos] != chars [pos])
 							return false;
@@ -1665,24 +1690,28 @@ namespace System
 				else
 					year = DateTime.Today.Year;
 			}
-
-			if (ampm == 0 && hour == 12)
-				hour = 0;
-
-			if (ampm == 1 && (!flexibleTwoPartsParsing || hour < 12))
-				hour = hour + 12;
 			
-			// For anything out of range 
-			// return false
-			if (year < 1 || year > 9999 || 
-				month < 1 || month >12  ||
-				day < 1 || day > DateTime.DaysInMonth(year, month) ||
-				hour < 0 || hour > 23 ||
-				minute < 0 || minute > 59 ||
-				second < 0 || second > 59)
+			if (ampm == 0) { // AM designator
+				if (hour >= 12 && format_with_24_hours && exact)
+					return false;
+				
+				if (hour == 12)
+					hour = 0;
+			} else if (ampm == 1) {	// PM designator
+				if (hour < 12) {
+					if (format_with_24_hours && exact)
+						return false;
+					
+					hour += 12;
+				}
+			}
+			
+			try {
+				result = dfi.Calendar.ToDateTime (year, month, day, hour, minute, second, 0);
+			} catch {
 				return false;
+			}
 
-			result = new DateTime (year, month, day, hour, minute, second, 0);
 			result = result.AddSeconds(fractionalSeconds);
 
 			if (dayofweek != -1 && dayofweek != (int) result.DayOfWeek)
@@ -1771,7 +1800,7 @@ namespace System
 			{
 				if ((style & DateTimeStyles.AdjustToUniversal) != 0 || (style & DateTimeStyles.AssumeLocal) != 0 ||
 					 (style & DateTimeStyles.AssumeUniversal) != 0)
-					throw new ArgumentException ("The DateTimeStyles value RoundtripKind cannot be used with the values AssumeLocal, Asersal or AdjustToUniversal.", "style");
+					throw new ArgumentException ("The DateTimeStyles value RoundtripKind cannot be used with the values AssumeLocal, AssumeUniversal or AdjustToUniversal.", "style");
 			}
 			if ((style & DateTimeStyles.AssumeUniversal) != 0 && (style & DateTimeStyles.AssumeLocal) != 0)			
 				throw new ArgumentException ("The DateTimeStyles values AssumeLocal and AssumeUniversal cannot be used together.", "style");
@@ -1891,6 +1920,9 @@ namespace System
 
 		public long ToFileTimeUtc()
 		{
+			if (Kind == DateTimeKind.Local)
+				return ToFileTime ();
+
 			if (Ticks < w32file_epoch) {
 				throw new ArgumentOutOfRangeException("file time is not valid");
 			}
@@ -1966,10 +1998,9 @@ namespace System
 			if (format == null || format == String.Empty)
 				format = "G";
 
-			bool useutc = false, use_invariant = false;
-
 			if (format.Length == 1) {
 				char fchar = format [0];
+				bool use_invariant, useutc;
 				format = DateTimeUtils.GetStandardPattern (fchar, dfi, out useutc, out use_invariant);
 				if (fchar == 'U')
 					return DateTimeUtils.ToString (ToUniversalTime (), format, dfi);
@@ -1977,6 +2008,9 @@ namespace System
 
 				if (format == null)
 					throw new FormatException ("format is not one of the format specifier characters defined for DateTimeFormatInfo");
+
+				if (use_invariant)
+					dfi = DateTimeFormatInfo.InvariantInfo;
 			}
 
 			// Don't convert UTC value. It just adds 'Z' for 
@@ -2149,7 +2183,7 @@ namespace System
 			info.AddValue ("ticks", t);
 
 			// This is the new .NET format, encodes the kind on the top bits
-			info.AddValue ("dateData", encoded);
+			info.AddValue ("dateData", (UInt64)encoded);
 		}
 		
 #if MONOTOUCH

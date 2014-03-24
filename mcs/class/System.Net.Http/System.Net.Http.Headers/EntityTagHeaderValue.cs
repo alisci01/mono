@@ -26,24 +26,28 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Collections.Generic;
+
 namespace System.Net.Http.Headers
 {
 	public class EntityTagHeaderValue : ICloneable
 	{
-		static readonly EntityTagHeaderValue any = new EntityTagHeaderValue ("*");
+		static readonly EntityTagHeaderValue any = new EntityTagHeaderValue () { Tag = "*" };
 
 		public EntityTagHeaderValue (string tag)
-			: this (tag, false)
 		{
+			Parser.Token.CheckQuotedString (tag);
+			Tag = tag;
 		}
 
 		public EntityTagHeaderValue (string tag, bool isWeak)
+			: this (tag)
 		{
-			if (tag == null)
-				throw new ArgumentNullException ("tag");
-
-			Tag = tag;
 			IsWeak = isWeak;
+		}
+
+		internal EntityTagHeaderValue ()
+		{
 		}
 
 		public static EntityTagHeaderValue Any {
@@ -52,8 +56,8 @@ namespace System.Net.Http.Headers
 			}
 		}
 
-		public bool IsWeak { get; private set; }
-		public string Tag { get; private set; }
+		public bool IsWeak { get; internal set; }
+		public string Tag { get; internal set; }
 
 		object ICloneable.Clone ()
 		{
@@ -83,7 +87,61 @@ namespace System.Net.Http.Headers
 
 		public static bool TryParse (string input, out EntityTagHeaderValue parsedValue)
 		{
-			throw new NotImplementedException ();
+			var lexer = new Lexer (input);
+			Token token;
+			if (TryParseElement (lexer, out parsedValue, out token) && token == Token.Type.End)
+				return true;
+
+			parsedValue = null;
+			return false;
+		}
+
+		static bool TryParseElement (Lexer lexer, out EntityTagHeaderValue parsedValue, out Token t)
+		{
+			parsedValue = null;
+
+			t = lexer.Scan ();
+			bool is_weak = false;
+
+			if (t == Token.Type.Token) {
+				var s = lexer.GetStringValue (t);
+				if (s == "*") {
+					parsedValue = any;
+
+					t = lexer.Scan ();
+					return true;
+				}
+
+				if (s != "W" || lexer.PeekChar () != '/')
+					return false;
+
+				is_weak = true;
+				lexer.EatChar ();
+				t = lexer.Scan ();
+			}
+
+			if (t != Token.Type.QuotedString)
+				return false;
+
+			parsedValue = new EntityTagHeaderValue ();
+			parsedValue.Tag = lexer.GetStringValue (t);
+			parsedValue.IsWeak = is_weak;
+
+			t = lexer.Scan ();
+
+			return true;
+		}
+
+		internal static bool TryParse (string input, int minimalCount, out List<EntityTagHeaderValue> result)
+		{
+			return CollectionParser.TryParse (input, minimalCount, TryParseElement, out result);
+		}
+
+		public override string ToString ()
+		{
+			return IsWeak ?
+				"W/" + Tag :
+				Tag;
 		}
 	}
 }

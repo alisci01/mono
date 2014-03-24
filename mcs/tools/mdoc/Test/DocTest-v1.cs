@@ -231,7 +231,7 @@ namespace Mono.DocTest {
 
 		/// <remarks><c>T:Mono.DocTest.Widget.Direction</c>.</remarks>
 		[Flags]
-		public enum Direction {
+		protected internal enum Direction {
 			/// <remarks><c>T:Mono.DocTest.Widget.Direction.North</c>.</remarks>
 			North,
 			/// <remarks><c>T:Mono.DocTest.Widget.Direction.South</c>.</remarks>
@@ -361,6 +361,10 @@ namespace Mono.DocTest {
 		/// <remarks><c>M:Mono.DocTest.Widget.op_UnaryPlus(Mono.DocTest.Widget)</c>.</remarks>
 		/// <returns>A <see cref="T:Mono.DocTest.Widget" /> instance.</returns>
 		public static Widget operator+ (Widget x) {return null;}
+
+		/// <remarks><c>M:Mono.DocTest.Widget.op_Division</c>.</remarks>
+		/// <returns>A <see cref="T:Mono.DocTest.Widget" /> instance.</returns>
+		public static Widget op_Division = null;
 
 		/// <param name="x1">Yet Another <see cref="T:Mono.DocTest.Widget" />.</param>
 		/// <param name="x2">Yay, <see cref="T:Mono.DocTest.Widget" />s.</param>
@@ -576,7 +580,7 @@ namespace Mono.DocTest.Generic {
 		/// <remarks>T:Mono.DocTest.Generic.GenericBase`1.NestedCollection</remarks>
 		public class NestedCollection {
 			/// <remarks>T:Mono.DocTest.Generic.GenericBase`1.NestedCollection.Enumerator</remarks>
-			public struct Enumerator {
+			protected internal struct Enumerator {
 			}
 		}
 	}

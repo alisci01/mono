@@ -32,7 +32,7 @@ namespace System.Net.Http.Headers
 {
 	public sealed class HttpRequestHeaders : HttpHeaders
 	{
-		bool? expectContinue, connectionclose, transferEncodingChunked;
+		bool? expectContinue;
 
 		internal HttpRequestHeaders ()
 			: base (HttpHeaderKind.Request)
@@ -89,7 +89,7 @@ namespace System.Net.Http.Headers
 
 		public bool? ConnectionClose {
 			get {
-				if (connectionclose == true || Connection.Contains ("close"))
+				if (connectionclose == true || Connection.Find (l => string.Equals (l, "close", StringComparison.OrdinalIgnoreCase)) != null)
 					return true;
 
 				return connectionclose;
@@ -117,7 +117,7 @@ namespace System.Net.Http.Headers
 				return GetValue<DateTimeOffset?> ("Date");
 			}
 			set {
-				AddOrRemove ("Date", value);
+				AddOrRemove ("Date", value, Parser.DateTime.ToString);
 			}
 		}
 
@@ -132,7 +132,7 @@ namespace System.Net.Http.Headers
 				if (expectContinue.HasValue)
 					return expectContinue;
 
-				var found = TransferEncoding.Find (l => StringComparer.OrdinalIgnoreCase.Equals (l.Value, "100-continue"));
+				var found = TransferEncoding.Find (l => string.Equals (l.Value, "100-continue", StringComparison.OrdinalIgnoreCase));
 				return found != null ? true : (bool?) null;
 			}
 			set {
@@ -153,6 +153,9 @@ namespace System.Net.Http.Headers
 				return GetValue<string> ("From");
 			}
 			set {
+				if (!string.IsNullOrEmpty (value) && !Parser.EmailAddress.TryParse (value, out value))
+					throw new FormatException ();
+
 				AddOrRemove ("From", value);
 			}
 		}
@@ -177,7 +180,7 @@ namespace System.Net.Http.Headers
 				return GetValue<DateTimeOffset?> ("If-Modified-Since");
 			}
 			set {
-				AddOrRemove ("If-Modified-Since", value);
+				AddOrRemove ("If-Modified-Since", value, Parser.DateTime.ToString);
 			}
 		}
 
@@ -201,7 +204,7 @@ namespace System.Net.Http.Headers
 				return GetValue<DateTimeOffset?> ("If-Unmodified-Since");
 			}
 			set {
-				AddOrRemove ("If-Unmodified-Since", value);
+				AddOrRemove ("If-Unmodified-Since", value, Parser.DateTime.ToString);
 			}
 		}
 
@@ -270,7 +273,7 @@ namespace System.Net.Http.Headers
 				if (transferEncodingChunked.HasValue)
 					return transferEncodingChunked;
 
-				var found = TransferEncoding.Find (l => StringComparer.OrdinalIgnoreCase.Equals (l.Value, "chunked"));
+				var found = TransferEncoding.Find (l => string.Equals (l.Value, "chunked", StringComparison.OrdinalIgnoreCase));
 				return found != null ? true : (bool?) null;
 			}
 			set {
@@ -306,6 +309,13 @@ namespace System.Net.Http.Headers
 		public HttpHeaderValueCollection<WarningHeaderValue> Warning {
 			get {
 				return GetValues<WarningHeaderValue> ("Warning");
+			}
+		}
+
+		internal void AddHeaders (HttpRequestHeaders headers)
+		{
+			foreach (var header in headers) {
+				TryAddWithoutValidation (header.Key, header.Value);
 			}
 		}
 	}

@@ -25,17 +25,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 using System;
+using System.Collections.Generic;
 using System.Runtime.Serialization;
 using System.Runtime.InteropServices;
 using System.Security.Permissions;
 
 namespace System.Threading
 {
-	[HostProtection (SecurityAction.LinkDemand, Synchronization = true, ExternalThreading = true)]
 	[System.Diagnostics.DebuggerDisplay ("IsValueCreated={IsValueCreated}, Value={ValueForDebugDisplay}")]
-	[System.Diagnostics.DebuggerTypeProxy ("System.Threading.SystemThreading_ThreadLocalDebugView`1")]
 	public class ThreadLocal<T> : IDisposable
 	{
 		struct TlsDatum {
@@ -68,6 +67,18 @@ namespace System.Threading
 				throw new ArgumentNullException ("valueFactory");
 			this.valueFactory = valueFactory;
 		}
+
+#if NET_4_5
+		public ThreadLocal (bool trackAllValues) : this () {
+			if (trackAllValues)
+				throw new NotImplementedException ();
+		}
+
+		public ThreadLocal (Func<T> valueFactory, bool trackAllValues) : this (valueFactory) {
+			if (trackAllValues)
+				throw new NotImplementedException ();
+		}
+#endif
 
 		public void Dispose ()
 		{
@@ -139,10 +150,20 @@ namespace System.Threading
 				tlsdata.data = value;
 			}
 		}
-		
+
+#if NET_4_5
+		public IList<T> Values {
+			get {
+				if (tls_offset == 0)
+					throw new ObjectDisposedException ("ThreadLocal object");
+				throw new NotImplementedException ();
+			}
+		}
+#endif
+
 		public override string ToString ()
 		{
-			return string.Format ("[ThreadLocal: IsValueCreated={0}, Value={1}]", IsValueCreated, Value);
+			return Value.ToString ();
 		}
 		
 	}

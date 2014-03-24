@@ -9,22 +9,20 @@
     <OutputType>Library</OutputType>
     <NoWarn>1699</NoWarn>
     <OutputPath>./../../class/lib/net_4_0</OutputPath>
-    <DefineConstants>NET_1_1;NET_2_0;NET_3_0;NET_3_5;NET_4_0</DefineConstants>
     <NoStdLib>true</NoStdLib>
+
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>mscorlib</RootNamespace>
+    <RootNamespace></RootNamespace>
     <AssemblyName>Mono.CodeContracts</AssemblyName>
     <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
-    <StartupObject>
-    </StartupObject>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <NoWarn>1699</NoWarn>
-    <Optimize>true</Optimize>
-    <DefineConstants>NET_1_1;NET_2_0;NET_3_0;NET_3_5;NET_4_0</DefineConstants>
+    <Optimize>false</Optimize>
+    <DefineConstants>DEBUG;TRACE;NET_1_1;NET_2_0;NET_3_0;NET_3_5;NET_4_0</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <AdditionalLibPaths>./../../class/lib/net_4_0</AdditionalLibPaths>
@@ -157,10 +155,62 @@
     <Compile Include="Mono.CodeContracts.Static.Analysis.HeapAnalysis\ValueDecoder.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.HeapAnalysis\Wrapper.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.NonNull\Analysis.cs" />
-    <Compile Include="Mono.CodeContracts.Static.Analysis.NonNull\Domain.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.NonNull\NonNullDomain.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.NonNull\ExpressionAssertDischarger.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.NonNull\ExpressionAssumeDecoder.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.NonNull\NonNullAnalysisFacade.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\AbstractInterpretationException.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Analysers.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Analysis.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Analysis.GenericValueAnalysis.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Analysis.ConstantEvaluator.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Analysis.GenericNumericalAnalysis.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\BoxedExpressionDecoder.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\BoxedExpressionEncoder.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\BoxedVariable.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Counter.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\DisInterval.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\DisIntervalAssumer.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\DisIntervalContext.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ConstToIntervalEvaluator.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\DisIntervalEnvironment.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\EvaluateExpressionVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ExpressionType.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\GetThresholdVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IExpressionDecoder.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IExpressionEncoder.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IIntervalEnvironment.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalAssumer.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalContext.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalContextBase.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalEnvironment.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalInference.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalRationalAssumerBase.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalRationalContextBase.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalAssumeFalseVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalAssumeTrueVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalAssumerBase.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\LongToIntegerConstantEvaluator.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\EvaluateArithmeticWithOverflow.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ExpressionOperator.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ExpressionViaStringComparer.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ConstantEvaluatorVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\GenericExpressionVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\GenericTypeExpressionVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IEnvironmentDomain.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Interval.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalBase.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\IntervalEnvironmentBase.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Monomial.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ObjectExtensions.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Polynomial.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Rational.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\AssumeFalseVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\AssumeTrueVisitor.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\RationalThreshold.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\Threshold.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\TresholdDB.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Analysis.Numerical\ValueExpressionDecoder.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.StackAnalysis\APCMap.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.StackAnalysis\SequenceGenerator.cs" />
     <Compile Include="Mono.CodeContracts.Static.Analysis.StackAnalysis\StackDecoder.cs" />
@@ -302,7 +352,12 @@
     <Compile Include="Mono.CodeContracts.Static.DataFlowAnalysis\IWidenStrategy.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataFlowAnalysis\Joiner.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataFlowAnalysis\StepWidening.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures.Patricia\BranchNode.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures.Patricia\EmptyNode.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures.Patricia\LeafNode.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures.Patricia\PatriciaTrieNode.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\AbstractWorkList.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures\BooleanExtensions.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\DecoratorHelper.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\DepthFirst.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\DoubleDictionary.cs" />
@@ -321,18 +376,19 @@
     <Compile Include="Mono.CodeContracts.Static.DataStructures\ImmutableSet.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\ImmutableSetExtensions.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\Indexable.cs" />
-    <Compile Include="Mono.CodeContracts.Static.DataStructures\ITypedProperties.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures\IPropertyCollection.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\IWorkList.cs" />
-    <Compile Include="Mono.CodeContracts.Static.DataStructures\LispList.cs" />
-    <Compile Include="Mono.CodeContracts.Static.DataStructures\LispListExtensions.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures\Sequence.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures\SequenceExtensions.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\Optional.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\Pair.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\PriorityQueue.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\TypedKey.cs" />
-    <Compile Include="Mono.CodeContracts.Static.DataStructures\TypedProperties.cs" />
+    <Compile Include="Mono.CodeContracts.Static.DataStructures\PropertyCollection.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\VisitStatus.cs" />
     <Compile Include="Mono.CodeContracts.Static.DataStructures\WorkList.cs" />
     <Compile Include="Mono.CodeContracts.Static.Extensions\Extensions.cs" />
+    <Compile Include="Mono.CodeContracts.Static.Lattices\AbstractDomainExtensions.cs" />
     <Compile Include="Mono.CodeContracts.Static.Lattices\EnvironmentDomain.cs" />
     <Compile Include="Mono.CodeContracts.Static.Lattices\FlatDomain.cs" />
     <Compile Include="Mono.CodeContracts.Static.Lattices\IAbstractDomain.cs" />
@@ -358,8 +414,7 @@
     <Compile Include="Mono.CodeContracts.Static\CheckOptions.cs" />
     <Compile Include="Mono.CodeContracts.Static\Checker.cs" />
     <Compile Include="Mono.CodeContracts.Static\DebugOptions.cs" />
-    <Compile Include="Mono.CodeContracts.Static\ProofOutcome.cs" />
-    <Compile Include="Mono.CodeContracts.Static\ProofOutcomeExtensions.cs" />
+    <Compile Include="Mono.CodeContracts.Static\ProofOutcome.cs" />    
   </ItemGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
@@ -374,24 +429,25 @@
   <ItemGroup>
     <Reference Include="mscorlib.dll">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\\lib\build\mscorlib.dll</HintPath>
+      <HintPath>mscorlib.dll</HintPath>
     </Reference>
     <Reference Include="System">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\\lib\build\System</HintPath>
+      <HintPath>System</HintPath>
     </Reference>
     <Reference Include="System.Core">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\\lib\build\System.Core</HintPath>
+      <HintPath>System.Core</HintPath>
     </Reference>
     <Reference Include="Mono.Cecil.dll">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\\lib\build\Mono.Cecil.dll</HintPath>
+      <HintPath>Mono.Cecil.dll</HintPath>
     </Reference>
     <Reference Include="Mono.Cecil.Mdb.dll">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\\lib\build\Mono.Cecil.Mdb.dll</HintPath>
+      <HintPath>Mono.Cecil.Mdb.dll</HintPath>
     </Reference>
+
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Properties\" />

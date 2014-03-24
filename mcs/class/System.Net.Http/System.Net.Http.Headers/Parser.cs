@@ -27,6 +27,8 @@
 //
 
 using System.Net.Mail;
+using System.Globalization;
+using System.Collections.Generic;
 
 namespace System.Net.Http.Headers
 {
@@ -36,7 +38,13 @@ namespace System.Net.Http.Headers
 		{
 			public static bool TryParse (string input, out string result)
 			{
-				throw new NotImplementedException ();
+				if (input != null && Lexer.IsValidToken (input)) {
+					result = input;
+					return true;
+				}
+
+				result = null;
+				return false;
 			}
 
 			public static void Check (string s)
@@ -51,13 +59,54 @@ namespace System.Net.Http.Headers
 					throw new FormatException (s);
 				}
 			}
+
+			public static bool TryCheck (string s)
+			{
+				if (s == null)
+					return false;
+
+				return Lexer.IsValidToken (s);
+			}
+
+			public static void CheckQuotedString (string s)
+			{
+				if (s == null)
+					throw new ArgumentNullException ();
+
+				var lexer = new Lexer (s);
+				if (lexer.Scan () == Headers.Token.Type.QuotedString && lexer.Scan () == Headers.Token.Type.End)
+					return;
+
+				if (s.Length == 0)
+					throw new ArgumentException ();
+
+				throw new FormatException (s);
+			}
+
+			public static void CheckComment (string s)
+			{
+				if (s == null)
+					throw new ArgumentNullException ();
+
+				var lexer = new Lexer (s);
+
+				string temp;
+				if (!lexer.ScanCommentOptional (out temp)) {
+					if (s.Length == 0)
+						throw new ArgumentException ();
+
+					throw new FormatException (s);
+				}
+			}
 		}
 
 		public static class DateTime
 		{
+			public new static readonly Func<object, string> ToString = l => ((DateTimeOffset) l).ToString ("r", CultureInfo.InvariantCulture);
+			
 			public static bool TryParse (string input, out DateTimeOffset result)
 			{
-				throw new NotImplementedException ();
+				return Lexer.TryGetDateValue (input, out result);
 			}
 		}
 
@@ -80,7 +129,29 @@ namespace System.Net.Http.Headers
 		{
 			public static bool TryParse (string input, out int result)
 			{
-				throw new NotImplementedException ();
+				return int.TryParse (input, NumberStyles.None, CultureInfo.InvariantCulture, out result);
+			}
+		}
+
+		public static class Long
+		{
+			public static bool TryParse (string input, out long result)
+			{
+				return long.TryParse (input, NumberStyles.None, CultureInfo.InvariantCulture, out result);
+			}
+		}
+
+		public static class MD5
+		{
+			public static bool TryParse (string input, out byte[] result)
+			{
+				try {
+					result = Convert.FromBase64String (input);
+					return true;
+				} catch {
+					result = null;
+					return false;
+				}
 			}
 		}
 
@@ -88,7 +159,14 @@ namespace System.Net.Http.Headers
 		{
 			public static bool TryParse (string input, out TimeSpan result)
 			{
-				throw new NotImplementedException ();
+				int value;
+				if (Int.TryParse (input, out value)) {
+					result = TimeSpan.FromSeconds (value);
+					return true;
+				}
+
+				result = TimeSpan.Zero;
+				return false;
 			}
 		}
 
@@ -96,7 +174,21 @@ namespace System.Net.Http.Headers
 		{
 			public static bool TryParse (string input, out System.Uri result)
 			{
-				throw new NotImplementedException ();
+				return System.Uri.TryCreate (input, UriKind.RelativeOrAbsolute, out result);
+			}
+
+			public static void Check (string s)
+			{
+				if (s == null)
+					throw new ArgumentNullException ();
+
+				System.Uri uri;
+				if (!TryParse (s, out uri)) {
+					if (s.Length == 0)
+						throw new ArgumentException ();
+
+					throw new FormatException (s);
+				}
 			}
 		}
 	}

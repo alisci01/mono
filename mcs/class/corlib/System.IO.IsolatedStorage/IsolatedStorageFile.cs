@@ -27,7 +27,6 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-#if !MOONLIGHT
 using System.Collections;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -54,10 +53,11 @@ namespace System.IO.IsolatedStorage {
 #if !MOBILE
 		private bool _resolved;
 		private ulong _maxSize;
-#endif
 		private Evidence _fullEvidences;
-		private static Mutex mutex = new Mutex ();
-#if NET_4_0 || MOBILE
+		private static readonly Mutex mutex = new Mutex ();
+#endif
+		
+#if NET_4_0
 		private bool closed;
 		private bool disposed;
 #endif
@@ -279,7 +279,7 @@ namespace System.IO.IsolatedStorage {
 			return storageFile;
 		}
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[ComVisible (false)]
 		public static IsolatedStorageFile GetUserStoreForSite ()
 		{
@@ -441,7 +441,7 @@ namespace System.IO.IsolatedStorage {
 		}
 
 		[CLSCompliant(false)]
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[Obsolete]
 #endif
 		public override ulong CurrentSize {
@@ -449,7 +449,7 @@ namespace System.IO.IsolatedStorage {
 		}
 
 		[CLSCompliant(false)]
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[Obsolete]
 #endif
 		public override ulong MaximumSize {
@@ -504,7 +504,7 @@ namespace System.IO.IsolatedStorage {
 			get { return directory.FullName; }
 		}
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[ComVisible (false)]
 		public override long AvailableFreeSpace {
 			get {
@@ -560,7 +560,7 @@ namespace System.IO.IsolatedStorage {
 
 		public void Close ()
 		{
-#if NET_4_0 || MOBILE
+#if NET_4_0
 			closed = true;
 #endif
 		}
@@ -572,19 +572,19 @@ namespace System.IO.IsolatedStorage {
 
 			if (dir.IndexOfAny (Path.PathSeparatorChars) < 0) {
 				if (directory.GetFiles (dir).Length > 0)
-#if NET_4_0 || MOBILE
+#if NET_4_0
 					throw new IsolatedStorageException ("Unable to create directory.");
 #else
 					throw new IOException (Locale.GetText ("Directory name already exists as a file."));
 #endif
 				directory.CreateSubdirectory (dir);
 			} else {
-				string[] dirs = dir.Split (Path.PathSeparatorChars);
+				string[] dirs = dir.Split (Path.PathSeparatorChars, StringSplitOptions.RemoveEmptyEntries);
 				DirectoryInfo dinfo = directory;
 
 				for (int i = 0; i < dirs.Length; i++) {
 					if (dinfo.GetFiles (dirs [i]).Length > 0)
-#if NET_4_0 || MOBILE
+#if NET_4_0
 						throw new IsolatedStorageException ("Unable to create directory.");
 #else
 						throw new IOException (Locale.GetText (
@@ -595,7 +595,7 @@ namespace System.IO.IsolatedStorage {
 			}
 		}
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[ComVisible (false)]
 		public void CopyFile (string sourceFileName, string destinationFileName)
 		{
@@ -646,6 +646,8 @@ namespace System.IO.IsolatedStorage {
 		public void DeleteDirectory (string dir)
 		{
 			try {
+				if (Path.IsPathRooted (dir))
+					dir = dir.Substring (1);
 				DirectoryInfo subdir = directory.CreateSubdirectory (dir);
 				subdir.Delete ();
 			}
@@ -674,7 +676,7 @@ namespace System.IO.IsolatedStorage {
 
 		public void Dispose ()
 		{
-#if NET_4_0 || MOBILE
+#if NET_4_0
 			// Dispose may be calling Close, but we are not sure
 			disposed = true;
 #endif
@@ -682,7 +684,7 @@ namespace System.IO.IsolatedStorage {
 			GC.SuppressFinalize (this);
 		}
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[ComVisible (false)]
 		public bool DirectoryExists (string path)
 		{
@@ -764,12 +766,12 @@ namespace System.IO.IsolatedStorage {
 			return Directory.GetLastWriteTime (full_path);
 		}
 #endif
-
+		
 		public string[] GetDirectoryNames (string searchPattern)
 		{
 			if (searchPattern == null)
 				throw new ArgumentNullException ("searchPattern");
-#if NET_4_0 || MOBILE
+#if NET_4_0
 			if (searchPattern.Contains (".."))
 				throw new ArgumentException ("Search pattern cannot contain '..' to move up directories.", "searchPattern");
 #endif
@@ -782,21 +784,30 @@ namespace System.IO.IsolatedStorage {
 			if (path == null || path.Length == 0) {
 				adi = directory.GetDirectories (searchPattern);
 			} else {
-				DirectoryInfo[] subdirs = directory.GetDirectories (path);
 				// we're looking for a single result, identical to path (no pattern here)
+				DirectoryInfo[] subdirs = directory.GetDirectories (path);
+				DirectoryInfo di = subdirs [0];
 				// we're also looking for something under the current path (not outside isolated storage)
-				if ((subdirs.Length == 1) && (subdirs [0].Name == path) && (subdirs [0].FullName.IndexOf (directory.FullName) >= 0)) {
-					adi = subdirs [0].GetDirectories (pattern);
-				} else {
-					// CAS, even in FullTrust, normally enforce IsolatedStorage
-					throw new SecurityException ();
+				if (di.FullName.IndexOf (directory.FullName) >= 0) {
+					adi = di.GetDirectories (pattern);
+					string[] segments = path.Split (new char [] { Path.DirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+					for (int i = segments.Length - 1; i >= 0; i--) {
+						if (di.Name != segments [i]) {
+							adi = null;
+							break;
+						}
+						di = di.Parent;
+					}
 				}
 			}
+			// CAS, even in FullTrust, normally enforce IsolatedStorage
+			if (adi == null)
+				throw new SecurityException ();
 			 
 			return GetNames (adi);
 		}
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[ComVisible (false)]
 		public string [] GetDirectoryNames ()
 		{
@@ -816,7 +827,7 @@ namespace System.IO.IsolatedStorage {
 		{
 			if (searchPattern == null)
 				throw new ArgumentNullException ("searchPattern");
-#if NET_4_0 || MOBILE
+#if NET_4_0
 			if (searchPattern.Contains (".."))
 				throw new ArgumentException ("Search pattern cannot contain '..' to move up directories.", "searchPattern");
 #endif
@@ -843,7 +854,7 @@ namespace System.IO.IsolatedStorage {
 			return GetNames (afi);
 		}
 
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		[ComVisible (false)]
 		public string [] GetFileNames ()
 		{
@@ -946,7 +957,7 @@ namespace System.IO.IsolatedStorage {
 
 		public override void Remove ()
 		{
-#if NET_4_0 || MOBILE
+#if NET_4_0
 			CheckOpen (false);
 #endif
 			try {
@@ -968,7 +979,7 @@ namespace System.IO.IsolatedStorage {
 		}
 
 		// internal stuff
-#if NET_4_0 || MOBILE
+#if NET_4_0
 		void CheckOpen ()
 		{
 			CheckOpen (true);
@@ -989,7 +1000,7 @@ namespace System.IO.IsolatedStorage {
 			return Path.GetFullPath (path).StartsWith (directory.FullName);
 		}
 #endif
-		
+
 #if !MOBILE
 		private string GetNameFromIdentity (object identity)
 		{
@@ -1087,4 +1098,3 @@ namespace System.IO.IsolatedStorage {
 #endif
 	}
 }
-#endif

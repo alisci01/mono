@@ -26,7 +26,7 @@ namespace Mono.CSharp {
 			Modifiers.INTERNAL |
 			Modifiers.PRIVATE;
 
-		public Const (DeclSpace parent, FullNamedExpression type, Modifiers mod_flags, MemberName name, Attributes attrs)
+		public Const (TypeDefinition parent, FullNamedExpression type, Modifiers mod_flags, MemberName name, Attributes attrs)
 			: base (parent, type, mod_flags, AllowedModifiers, name, attrs)
 		{
 			ModFlags |= Modifiers.STATIC;
@@ -59,16 +59,16 @@ namespace Mono.CSharp {
 
 			if ((field_attr & FieldAttributes.InitOnly) != 0)
 				Parent.PartialContainer.RegisterFieldForInitialization (this,
-					new FieldInitializer (spec, initializer, this));
+					new FieldInitializer (this, initializer, Location));
 
 			if (declarators != null) {
 				var t = new TypeExpression (MemberType, TypeExpression.Location);
-				int index = Parent.PartialContainer.Constants.IndexOf (this);
 				foreach (var d in declarators) {
 					var c = new Const (Parent, t, ModFlags & ~Modifiers.STATIC, new MemberName (d.Name.Value, d.Name.Location), OptAttributes);
 					c.initializer = d.Initializer;
 					((ConstInitializer) c.initializer).Name = d.Name.Value;
-					Parent.PartialContainer.Constants.Insert (++index, c);
+					c.Define ();
+					Parent.PartialContainer.Members.Add (c);
 				}
 			}
 
@@ -100,11 +100,16 @@ namespace Mono.CSharp {
 		{
 			if (t.IsGenericParameter) {
 				Report.Error (1959, loc,
-					"Type parameter `{0}' cannot be declared const", TypeManager.CSharpName (t));
+					"Type parameter `{0}' cannot be declared const", t.GetSignatureForError ());
 			} else {
 				Report.Error (283, loc,
-					"The type `{0}' cannot be declared const", TypeManager.CSharpName (t));
+					"The type `{0}' cannot be declared const", t.GetSignatureForError ());
 			}
+		}
+
+		public override void Accept (StructuralVisitor visitor)
+		{
+			visitor.Visit (this);
 		}
 	}
 
@@ -200,7 +205,7 @@ namespace Mono.CSharp {
 					else if (!(expr is Constant))
 						Error_ExpressionMustBeConstant (rc, expr.Location, GetSignatureForError ());
 					else
-						expr.Error_ValueCannotBeConverted (rc, expr.Location, field.MemberType, false);
+						expr.Error_ValueCannotBeConverted (rc, field.MemberType, false);
 				}
 
 				expr = c;

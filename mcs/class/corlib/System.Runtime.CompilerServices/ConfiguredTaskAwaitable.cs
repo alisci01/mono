@@ -28,13 +28,15 @@
 
 #if NET_4_5
 
+using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.ExceptionServices;
 
 namespace System.Runtime.CompilerServices
 {
 	public struct ConfiguredTaskAwaitable
 	{
-		public struct ConfiguredTaskAwaiter
+		public struct ConfiguredTaskAwaiter : ICriticalNotifyCompletion
 		{
 			readonly Task task;
 			readonly bool continueOnSourceContext;
@@ -53,8 +55,11 @@ namespace System.Runtime.CompilerServices
 
 			public void GetResult ()
 			{
+				if (!task.IsCompleted)
+					task.WaitCore (Timeout.Infinite, CancellationToken.None, true);
+
 				if (task.Status != TaskStatus.RanToCompletion)
-					throw TaskAwaiter.HandleUnexpectedTaskResult (task);
+					ExceptionDispatchInfo.Capture (TaskAwaiter.HandleUnexpectedTaskResult (task)).Throw ();
 			}
 
 			public void OnCompleted (Action continuation)
@@ -62,7 +67,15 @@ namespace System.Runtime.CompilerServices
 				if (continuation == null)
 					throw new ArgumentNullException ("continuation");
 
-				TaskAwaiter.HandleOnCompleted (task, continuation, continueOnSourceContext);
+				TaskAwaiter.HandleOnCompleted (task, continuation, continueOnSourceContext, true);
+			}
+			
+			public void UnsafeOnCompleted (Action continuation)
+			{
+				if (continuation == null)
+					throw new ArgumentNullException ("continuation");
+
+				TaskAwaiter.HandleOnCompleted (task, continuation, continueOnSourceContext, false);
 			}
 		}
 		

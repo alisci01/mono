@@ -72,9 +72,12 @@ namespace System.Runtime.Serialization.Json
 			if (serialized_object_count ++ == serializer.MaxItemsInObjectGraph)
 				throw SerializationError (String.Format ("The object graph exceeded the maximum object count '{0}' specified in the serializer", serializer.MaxItemsInObjectGraph));
 
-			if (type.IsGenericType && type.GetGenericTypeDefinition () == typeof (Nullable<>))
+			bool nullable = false;
+			if (type.IsGenericType && type.GetGenericTypeDefinition () == typeof (Nullable<>)) {
+				nullable = true;
 				type = Nullable.GetUnderlyingType (type);
-			
+			}
+
 			bool isNull = reader.GetAttribute ("type") == "null";
 
 			switch (Type.GetTypeCode (type)) {
@@ -96,34 +99,35 @@ namespace System.Runtime.Serialization.Json
 					throw new XmlException ("Invalid JSON char");
 				return Char.Parse(c);
 			case TypeCode.Single:
-				return reader.ReadElementContentAsFloat ();
 			case TypeCode.Double:
-				return reader.ReadElementContentAsDouble ();
 			case TypeCode.Decimal:
-				return reader.ReadElementContentAsDecimal ();
+					return ReadValueType (type, nullable);
 			case TypeCode.Byte:
 			case TypeCode.SByte:
 			case TypeCode.Int16:
 			case TypeCode.Int32:
 			case TypeCode.UInt16:
-				if (type.IsEnum)
-					return Enum.ToObject (type, Convert.ChangeType (reader.ReadElementContentAsLong (), Enum.GetUnderlyingType (type), null));
-				else
-					return Convert.ChangeType (reader.ReadElementContentAsDecimal (), type, null);
 			case TypeCode.UInt32:
 			case TypeCode.Int64:
-			case TypeCode.UInt64:
 				if (type.IsEnum)
 					return Enum.ToObject (type, Convert.ChangeType (reader.ReadElementContentAsLong (), Enum.GetUnderlyingType (type), null));
 				else
-					return Convert.ChangeType (reader.ReadElementContentAsDecimal (), type, null);
+					return ReadValueType (type, nullable);
+			case TypeCode.UInt64:
+				if (type.IsEnum)
+					return Enum.ToObject (type, Convert.ChangeType (reader.ReadElementContentAsDecimal (), Enum.GetUnderlyingType (type), null));
+				else
+					return ReadValueType (type, nullable);
 			case TypeCode.Boolean:
-				return reader.ReadElementContentAsBoolean ();
+				return ReadValueType (type, nullable);
 			case TypeCode.DateTime:
 				// it does not use ReadElementContentAsDateTime(). Different string format.
 				var s = reader.ReadElementContentAsString ();
-				if (s.Length < 2 || !s.StartsWith ("/Date(", StringComparison.Ordinal) || !s.EndsWith (")/", StringComparison.Ordinal))
+				if (s.Length < 2 || !s.StartsWith ("/Date(", StringComparison.Ordinal) || !s.EndsWith (")/", StringComparison.Ordinal)) {
+					if (nullable)
+						return null;
 					throw new XmlException ("Invalid JSON DateTime format. The value format should be '/Date(UnixTime)/'");
+				}
 
 				// The date can contain [SIGN]LONG, [SIGN]LONG+HOURSMINUTES or [SIGN]LONG-HOURSMINUTES
 				// the format for HOURSMINUTES is DDDD
@@ -156,7 +160,7 @@ namespace System.Runtime.Serialization.Json
 						return null;
 					}
 					else
-						return new Uri (reader.ReadElementContentAsString ());
+						return new Uri (reader.ReadElementContentAsString (), UriKind.RelativeOrAbsolute);
 				} else if (type == typeof (XmlQualifiedName)) {
 					s = reader.ReadElementContentAsString ();
 					int idx = s.IndexOf (':');
@@ -181,6 +185,13 @@ namespace System.Runtime.Serialization.Json
 					return ReadInstanceDrivenObject ();
 			}
 		}
+		
+		object ReadValueType (Type type, bool nullable)
+		{
+			string s = reader.ReadElementContentAsString ();
+			return nullable && s.Trim ().Length == 0 ? null : Convert.ChangeType (s, type, CultureInfo.InvariantCulture);
+		}
+		
 
 		Type GetRuntimeType (string name)
 		{

@@ -34,11 +34,17 @@ namespace Mono.Debugger.Soft
 		}
 	}
 
+	struct SourceInfo {
+		public string source_file;
+		public byte[] guid, hash;
+	}
+
 	class DebugInfo {
 		public int max_il_offset;
-		public string filename;
 		public int[] il_offsets;
 		public int[] line_numbers;
+		public int[] column_numbers;
+		public SourceInfo[] source_files;
 	}
 
 	struct FrameInfo {
@@ -53,7 +59,10 @@ namespace Mono.Debugger.Soft
 		public long assembly, module, base_type, element_type;
 		public int token, rank, attributes;
 		public bool is_byref, is_pointer, is_primitive, is_valuetype, is_enum;
+		public bool is_gtd, is_generic_type;
 		public long[] nested;
+		public long gtd;
+		public long[] type_args;
 	}
 
 	struct IfaceMapInfo {
@@ -64,10 +73,32 @@ namespace Mono.Debugger.Soft
 
 	class MethodInfo {
 		public int attributes, iattributes, token;
+		public bool is_gmd, is_generic_method;
+		public long gmd;
+		public long[] type_args;
 	}
 
 	class MethodBodyInfo {
 		public byte[] il;
+		public ExceptionClauseInfo[] clauses;
+	}
+
+	struct ExceptionClauseInfo {
+		public ExceptionClauseFlags flags;
+		public int try_offset;
+		public int try_length;
+		public int handler_offset;
+		public int handler_length;
+		public int filter_offset;
+		public long catch_type_id;
+	}
+
+	[Flags]
+	enum ExceptionClauseFlags {
+		None = 0x0,
+		Filter = 0x1,
+		Finally = 0x2,
+		Fault = 0x4,
 	}
 
 	struct ParamInfo {
@@ -119,6 +150,7 @@ namespace Mono.Debugger.Soft
 		VALUE_TYPE_ID_TYPE = 0xf1
 	}
 
+	[Flags]
 	enum InvokeFlags {
 		NONE = 0x0,
 		DISABLE_BREAKPOINTS = 0x1,
@@ -182,6 +214,12 @@ namespace Mono.Debugger.Soft
 		public long Assembly;
 	}		
 
+	class FieldMirrorInfo {
+		public string Name;
+		public long Parent, TypeId;
+		public int Attrs;
+	}
+
 	enum TokenType {
 		STRING = 0,
 		TYPE = 1,
@@ -190,8 +228,11 @@ namespace Mono.Debugger.Soft
 		UNKNOWN = 4
 	}
 
+	[Flags]
 	enum StackFrameFlags {
-		DEBUGGER_INVOKE = 1
+		NONE = 0,
+		DEBUGGER_INVOKE = 1,
+		NATIVE_TRANSITION = 2
 	}
 
 	class ResolvedToken {
@@ -231,6 +272,10 @@ namespace Mono.Debugger.Soft
 		public int Size {
 			get; set;
 		}
+
+		public int Filter {
+			get; set;
+		}
 	}
 
 	class ThreadModifier : Modifier {
@@ -247,6 +292,9 @@ namespace Mono.Debugger.Soft
 			get; set;
 		}
 		public bool Uncaught {
+			get; set;
+		}
+		public bool Subclasses {
 			get; set;
 		}
 	}
@@ -306,6 +354,10 @@ namespace Mono.Debugger.Soft
 			get; set;
 		}
 
+		public int ExitCode {
+			get; set;
+		}
+
 		public EventInfo (EventType type, int req_id) {
 			EventType = type;
 			ReqId = req_id;
@@ -359,7 +411,7 @@ namespace Mono.Debugger.Soft
 		 * with newer runtimes, and vice versa.
 		 */
 		internal const int MAJOR_VERSION = 2;
-		internal const int MINOR_VERSION = 11;
+		internal const int MINOR_VERSION = 28;
 
 		enum WPSuspendPolicy {
 			NONE = 0,
@@ -380,6 +432,7 @@ namespace Mono.Debugger.Soft
 			METHOD = 22,
 			TYPE = 23,
 			MODULE = 24,
+			FIELD = 25,
 			EVENT = 64
 		}
 
@@ -426,7 +479,8 @@ namespace Mono.Debugger.Soft
 			ABORT_INVOKE = 9,
 			SET_KEEPALIVE = 10,
 			GET_TYPES_FOR_SOURCE_FILE = 11,
-			GET_TYPES = 12
+			GET_TYPES = 12,
+			INVOKE_METHODS = 13
 		}
 
 		enum CmdEvent {
@@ -481,7 +535,9 @@ namespace Mono.Debugger.Soft
 			GET_LOCALS_INFO = 5,
 			GET_INFO = 6,
 			GET_BODY = 7,
-			RESOLVE_TOKEN = 8
+			RESOLVE_TOKEN = 8,
+			GET_CATTRS = 9,
+			MAKE_GENERIC_METHOD = 10
 		}
 
 		enum CmdType {
@@ -503,9 +559,15 @@ namespace Mono.Debugger.Soft
 			GET_VALUES_2 = 14,
 			CMD_TYPE_GET_METHODS_BY_NAME_FLAGS = 15,
 			GET_INTERFACES = 16,
-			GET_INTERFACE_MAP = 17
+			GET_INTERFACE_MAP = 17,
+			IS_INITIALIZED = 18
 		}
 
+		enum CmdField {
+			GET_INFO = 1
+		}
+
+		[Flags]
 		enum BindingFlagsExtensions {
 			BINDING_FLAGS_IGNORE_CASE = 0x70000000,
 		}
@@ -875,8 +937,9 @@ namespace Mono.Debugger.Soft
 				if (s == null)
 					return WriteInt (-1);
 
-				encode_int (data, s.Length, ref offset);
 				byte[] b = Encoding.UTF8.GetBytes (s);
+				MakeRoom (4);
+				encode_int (data, b.Length, ref offset);
 				MakeRoom (b.Length);
 				Buffer.BlockCopy (b, 0, data, offset, b.Length);
 				offset += b.Length;
@@ -984,6 +1047,7 @@ namespace Mono.Debugger.Soft
 		Thread receiver_thread;
 		Dictionary<int, byte[]> reply_packets;
 		Dictionary<int, ReplyCallback> reply_cbs;
+		Dictionary<int, int> reply_cb_counts;
 		object reply_packets_monitor;
 
 		internal event EventHandler<ErrorHandlerEventArgs> ErrorHandler;
@@ -992,6 +1056,7 @@ namespace Mono.Debugger.Soft
 			closed = false;
 			reply_packets = new Dictionary<int, byte[]> ();
 			reply_cbs = new Dictionary<int, ReplyCallback> ();
+			reply_cb_counts = new Dictionary<int, int> ();
 			reply_packets_monitor = new Object ();
 		}
 		
@@ -1034,6 +1099,8 @@ namespace Mono.Debugger.Soft
 			TransportSend (buf, 0, buf.Length);
 
 			receiver_thread = new Thread (new ThreadStart (receiver_thread_main));
+			receiver_thread.Name = "SDB Receiver";
+			receiver_thread.IsBackground = true;
 			receiver_thread.Start ();
 
 			Version = VM_GetVersion ();
@@ -1114,7 +1181,9 @@ namespace Mono.Debugger.Soft
 					if (!res)
 						break;
 				} catch (Exception ex) {
-					Console.WriteLine (ex);
+					if (!closed) {
+						Console.WriteLine (ex);
+					}
 					break;
 				}
 			}
@@ -1142,6 +1211,13 @@ namespace Mono.Debugger.Soft
 						if (cb == null) {
 							reply_packets [id] = packet;
 							Monitor.PulseAll (reply_packets_monitor);
+						} else {
+							int c = reply_cb_counts [id];
+							c --;
+							if (c == 0) {
+								reply_cbs.Remove (id);
+								reply_cb_counts.Remove (id);
+							}
 						}
 					}
 
@@ -1164,82 +1240,71 @@ namespace Mono.Debugger.Soft
 
 							EventType etype = (EventType)kind;
 
+							long thread_id = r.ReadId ();
 							if (kind == EventKind.VM_START) {
-								long thread_id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id };
 								//EventHandler.VMStart (req_id, thread_id, null);
 							} else if (kind == EventKind.VM_DEATH) {
+								int exit_code = 0;
+								if (Version.AtLeast (2, 27))
+									exit_code = r.ReadInt ();
 								//EventHandler.VMDeath (req_id, 0, null);
-								events [i] = new EventInfo (etype, req_id) { };
+								events [i] = new EventInfo (etype, req_id) { ExitCode = exit_code };
 							} else if (kind == EventKind.THREAD_START) {
-								long thread_id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = thread_id };
 								//EventHandler.ThreadStart (req_id, thread_id, thread_id);
 							} else if (kind == EventKind.THREAD_DEATH) {
-								long thread_id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = thread_id };
 								//EventHandler.ThreadDeath (req_id, thread_id, thread_id);
 							} else if (kind == EventKind.ASSEMBLY_LOAD) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.AssemblyLoad (req_id, thread_id, id);
 							} else if (kind == EventKind.ASSEMBLY_UNLOAD) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.AssemblyUnload (req_id, thread_id, id);
 							} else if (kind == EventKind.TYPE_LOAD) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.TypeLoad (req_id, thread_id, id);
 							} else if (kind == EventKind.METHOD_ENTRY) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.MethodEntry (req_id, thread_id, id);
 							} else if (kind == EventKind.METHOD_EXIT) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.MethodExit (req_id, thread_id, id);
 							} else if (kind == EventKind.BREAKPOINT) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								long loc = r.ReadLong ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id, Location = loc };
 								//EventHandler.Breakpoint (req_id, thread_id, id, loc);
 							} else if (kind == EventKind.STEP) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								long loc = r.ReadLong ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id, Location = loc };
 								//EventHandler.Step (req_id, thread_id, id, loc);
 							} else if (kind == EventKind.EXCEPTION) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								long loc = 0; // FIXME
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id, Location = loc };
 								//EventHandler.Exception (req_id, thread_id, id, loc);
 							} else if (kind == EventKind.APPDOMAIN_CREATE) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.AppDomainCreate (req_id, thread_id, id);
 							} else if (kind == EventKind.APPDOMAIN_UNLOAD) {
-								long thread_id = r.ReadId ();
 								long id = r.ReadId ();
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id };
 								//EventHandler.AppDomainUnload (req_id, thread_id, id);
 							} else if (kind == EventKind.USER_BREAK) {
-								long thread_id = r.ReadId ();
 								long id = 0;
 								long loc = 0;
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = id, Location = loc };
 								//EventHandler.Exception (req_id, thread_id, id, loc);
 							} else if (kind == EventKind.USER_LOG) {
-								long thread_id = r.ReadId ();
 								int level = r.ReadInt ();
 								string category = r.ReadString ();
 								string message = r.ReadString ();
@@ -1303,6 +1368,9 @@ namespace Mono.Debugger.Soft
 			case CommandSet.MODULE:
 				cmd = ((CmdModule)command).ToString ();
 				break;
+			case CommandSet.FIELD:
+				cmd = ((CmdField)command).ToString ();
+				break;
 			case CommandSet.EVENT:
 				cmd = ((CmdEvent)command).ToString ();
 				break;
@@ -1329,7 +1397,7 @@ namespace Mono.Debugger.Soft
 		}
 
 		/* Send a request and call cb when a result is received */
-		int Send (CommandSet command_set, int command, PacketWriter packet, Action<PacketReader> cb) {
+		int Send (CommandSet command_set, int command, PacketWriter packet, Action<PacketReader> cb, int count) {
 			int id = IdGenerator;
 
 			Stopwatch watch = null;
@@ -1350,6 +1418,7 @@ namespace Mono.Debugger.Soft
 					PacketReader r = new PacketReader (p);
 					cb.BeginInvoke (r, null, null);
 				};
+				reply_cb_counts [id] = count;
 			}
 
 			WritePacket (encoded_packet);
@@ -1542,7 +1611,38 @@ namespace Mono.Debugger.Soft
 
 						callback (v, exc, 0, state);
 					}
-				});
+				}, 1);
+		}
+
+		internal int VM_BeginInvokeMethods (long thread, long[] methods, ValueImpl this_arg, List<ValueImpl[]> arguments, InvokeFlags flags, InvokeMethodCallback callback, object state) {
+			// FIXME: Merge this with INVOKE_METHOD
+			var w = new PacketWriter ();
+			w.WriteId (thread);
+			w.WriteInt ((int)flags);
+			w.WriteInt (methods.Length);
+			for (int i = 0; i < methods.Length; ++i) {
+				w.WriteId (methods [i]);
+				w.WriteValue (this_arg);
+				w.WriteInt (arguments [i].Length);
+				w.WriteValues (arguments [i]);
+			}
+			return Send (CommandSet.VM, (int)CmdVM.INVOKE_METHODS, w, delegate (PacketReader r) {
+					ValueImpl v, exc;
+
+					if (r.ErrorCode != 0) {
+						callback (null, null, (ErrorCode)r.ErrorCode, state);
+					} else {
+						if (r.ReadByte () == 0) {
+							exc = r.ReadValue ();
+							v = null;
+						} else {
+							v = r.ReadValue ();
+							exc = null;
+						}
+
+						callback (v, exc, 0, state);
+					}
+				}, methods.Length);
 		}
 
 		internal void VM_AbortInvoke (long thread, int id)
@@ -1630,14 +1730,42 @@ namespace Mono.Debugger.Soft
 
 			DebugInfo info = new DebugInfo ();
 			info.max_il_offset = res.ReadInt ();
-			info.filename = res.ReadString ();
+
+			SourceInfo[] sources = null;
+			if (Version.AtLeast (2, 13)) {
+				int n = res.ReadInt ();
+				sources = new SourceInfo [n];
+				for (int i = 0; i < n; ++i) {
+					sources [i].source_file = res.ReadString ();
+					if (Version.AtLeast (2, 14)) {
+						sources [i].hash = new byte [16];
+						for (int j = 0; j < 16; ++j)
+							sources [i].hash [j] = (byte)res.ReadByte ();
+					}
+				}
+			} else {
+				sources = new SourceInfo [1];
+				sources [0].source_file = res.ReadString ();
+			}
 
 			int n_il_offsets = res.ReadInt ();
 			info.il_offsets = new int [n_il_offsets];
 			info.line_numbers = new int [n_il_offsets];
+			info.source_files = new SourceInfo [n_il_offsets];
+			info.column_numbers = new int [n_il_offsets];
 			for (int i = 0; i < n_il_offsets; ++i) {
 				info.il_offsets [i] = res.ReadInt ();
 				info.line_numbers [i] = res.ReadInt ();
+				if (Version.AtLeast (2, 12)) {
+					int idx = res.ReadInt ();
+					info.source_files [i] = idx >= 0 ? sources [idx] : default (SourceInfo);
+				} else {
+					info.source_files [i] = sources [0];
+				}
+				if (Version.AtLeast (2, 19))
+					info.column_numbers [i] = res.ReadInt ();
+				else
+					info.column_numbers [i] = 0;
 			}
 
 			return info;
@@ -1689,7 +1817,20 @@ namespace Mono.Debugger.Soft
 			info.attributes = res.ReadInt ();
 			info.iattributes = res.ReadInt ();
 			info.token = res.ReadInt ();
-
+			if (Version.AtLeast (2, 12)) {
+				int attrs = res.ReadByte ();
+				if ((attrs & (1 << 0)) != 0)
+					info.is_gmd = true;
+				if ((attrs & (1 << 1)) != 0)
+					info.is_generic_method = true;
+				info.gmd = res.ReadId ();
+				if (Version.AtLeast (2, 15)) {
+					if (info.is_generic_method) {
+						int n = res.ReadInt ();
+						info.type_args = res.ReadIds (n);
+					}
+				}
+			}
 			return info;
 		}
 
@@ -1700,6 +1841,28 @@ namespace Mono.Debugger.Soft
 			info.il = new byte [res.ReadInt ()];
 			for (int i = 0; i < info.il.Length; ++i)
 				info.il [i] = (byte)res.ReadByte ();
+
+			if (Version.AtLeast (2, 18)) {
+				info.clauses = new ExceptionClauseInfo [res.ReadInt ()];
+
+				for (int i = 0; i < info.clauses.Length; ++i) {
+					var clause = new ExceptionClauseInfo {
+						flags = (ExceptionClauseFlags) res.ReadInt (),
+						try_offset = res.ReadInt (),
+						try_length = res.ReadInt (),
+						handler_offset = res.ReadInt (),
+						handler_length = res.ReadInt (),
+					};
+
+					if (clause.flags == ExceptionClauseFlags.None)
+						clause.catch_type_id = res.ReadId ();
+					else if (clause.flags == ExceptionClauseFlags.Filter)
+						clause.filter_offset = res.ReadInt ();
+
+					info.clauses [i] = clause;
+				}
+			} else
+				info.clauses = new ExceptionClauseInfo [0];
 
 			return info;
 		}
@@ -1722,6 +1885,16 @@ namespace Mono.Debugger.Soft
 			}
 		}
 
+		internal CattrInfo[] Method_GetCustomAttributes (long id, long attr_type_id, bool inherit) {
+			PacketReader r = SendReceive (CommandSet.METHOD, (int)CmdMethod.GET_CATTRS, new PacketWriter ().WriteId (id).WriteId (attr_type_id));
+			return ReadCattrs (r);
+		}
+
+		internal long Method_MakeGenericMethod (long id, long[] args) {
+			PacketReader r = SendReceive (CommandSet.METHOD, (int)CmdMethod.MAKE_GENERIC_METHOD, new PacketWriter ().WriteId (id).WriteInt (args.Length).WriteIds (args));
+			return r.ReadId ();
+		}
+
 		/*
 		 * THREAD
 		 */
@@ -1736,11 +1909,14 @@ namespace Mono.Debugger.Soft
 
 			var frames = new FrameInfo [count];
 			for (int i = 0; i < count; ++i) {
-				frames [i].id = res.ReadInt ();
-				frames [i].method = res.ReadId ();
-				frames [i].il_offset = res.ReadInt ();
-				frames [i].flags = (StackFrameFlags)res.ReadByte ();
+				var f = new FrameInfo ();
+				f.id = res.ReadInt ();
+				f.method = res.ReadId ();
+				f.il_offset = res.ReadInt ();
+				f.flags = (StackFrameFlags)res.ReadByte ();
+				frames [i] = f;
 			}
+
 			return frames;
 		}
 
@@ -1826,11 +2002,20 @@ namespace Mono.Debugger.Soft
 			res.is_primitive = (b & 4) != 0;
 			res.is_valuetype = (b & 8) != 0;
 			res.is_enum = (b & 16) != 0;
+			res.is_gtd = (b & 32) != 0;
+			res.is_generic_type = (b & 64) != 0;
 
 			int nested_len = r.ReadInt ();
 			res.nested = new long [nested_len];
 			for (int i = 0; i < nested_len; ++i)
 				res.nested [i] = r.ReadId ();
+
+			if (Version.AtLeast (2, 12))
+				res.gtd = r.ReadId ();
+			if (Version.AtLeast (2, 15) && res.is_generic_type) {
+				int n = r.ReadInt ();
+				res.type_args = r.ReadIds (n);
+			}
 
 			return res;
 		}
@@ -1959,6 +2144,21 @@ namespace Mono.Debugger.Soft
 			return res;
 		}
 
+		internal bool Type_IsInitialized (long id) {
+			PacketReader r = SendReceive (CommandSet.TYPE, (int)CmdType.IS_INITIALIZED, new PacketWriter ().WriteId (id));
+			return r.ReadInt () == 1;
+		}
+
+		/*
+		 * FIELD
+		 */
+
+		internal FieldMirrorInfo Field_GetInfo (long id) {
+			PacketReader r = SendReceive (CommandSet.FIELD, (int)CmdField.GET_INFO, new PacketWriter ().WriteId (id));
+			FieldMirrorInfo info = new FieldMirrorInfo { Name = r.ReadString (), Parent = r.ReadId (), TypeId = r.ReadId (), Attrs = r.ReadInt () };
+			return info;
+		}
+
 		/*
 		 * EVENTS
 		 */
@@ -1982,6 +2182,8 @@ namespace Mono.Debugger.Soft
 						w.WriteId ((mod as StepModifier).Thread);
 						w.WriteInt ((mod as StepModifier).Size);
 						w.WriteInt ((mod as StepModifier).Depth);
+						if (Version.AtLeast (2, 16))
+							w.WriteInt ((mod as StepModifier).Filter);
 					} else if (mod is ThreadModifier) {
 						w.WriteByte ((byte)ModifierKind.THREAD_ONLY);
 						w.WriteId ((mod as ThreadModifier).Thread);
@@ -1994,6 +2196,11 @@ namespace Mono.Debugger.Soft
 							w.WriteBool (em.Caught);
 							w.WriteBool (em.Uncaught);
 						} else if (!em.Caught || !em.Uncaught) {
+							throw new NotSupportedException ("This request is not supported by the protocol version implemented by the debuggee.");
+						}
+						if (Version.MajorVersion > 2 || Version.MinorVersion > 24) {
+							w.WriteBool (em.Subclasses);
+						} else if (!em.Subclasses) {
 							throw new NotSupportedException ("This request is not supported by the protocol version implemented by the debuggee.");
 						}
 					} else if (mod is AssemblyModifier) {
@@ -2147,6 +2354,12 @@ namespace Mono.Debugger.Soft
 			return res;
 		}
 
+		public void ForceDisconnect ()
+		{
+			closed = true;
+			disconnected = true;
+			TransportClose ();
+		}
 	}
 	
 	class TcpConnection : Connection

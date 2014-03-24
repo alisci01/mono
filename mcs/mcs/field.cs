@@ -42,6 +42,11 @@ namespace Mono.CSharp
 		public Expression Initializer { get; private set; }
 
 		#endregion
+
+		public virtual FullNamedExpression GetFieldTypeExpression (FieldBase field)
+		{
+			return new TypeExpression (field.MemberType, Name.Location); 
+		}
 	}
 
 	//
@@ -62,10 +67,8 @@ namespace Mono.CSharp
 
 		static readonly string[] attribute_targets = new string [] { "field" };
 
-		protected FieldBase (DeclSpace parent, FullNamedExpression type, Modifiers mod,
-				     Modifiers allowed_mod, MemberName name, Attributes attrs)
-			: base (parent, null, type, mod, allowed_mod | Modifiers.ABSTRACT, Modifiers.PRIVATE,
-				name, attrs)
+		protected FieldBase (TypeDefinition parent, FullNamedExpression type, Modifiers mod, Modifiers allowed_mod, MemberName name, Attributes attrs)
+			: base (parent, type, mod, allowed_mod | Modifiers.ABSTRACT, Modifiers.PRIVATE, name, attrs)
 		{
 			if ((mod & Modifiers.ABSTRACT) != 0)
 				Report.Error (681, Location, "The modifier 'abstract' is not valid on fields. Try using a property instead");
@@ -94,6 +97,12 @@ namespace Mono.CSharp
 			}
 		}
 
+		public string Name {
+			get {
+				return MemberName.Name;
+			}
+		}
+
 		public FieldSpec Spec {
 			get {
 				return spec;
@@ -115,8 +124,7 @@ namespace Mono.CSharp
 
 			declarators.Add (declarator);
 
-			// TODO: This will probably break
-			Parent.AddMember (this, declarator.Name.Value);
+			Parent.AddNameToContainer (this, declarator.Name.Value);
 		}
 
 		public override void ApplyAttributeBuilder (Attribute a, MethodSpec ctor, byte[] cdata, PredefinedAttributes pa)
@@ -230,12 +238,14 @@ namespace Mono.CSharp
 		{
 			if (member_type.BuiltinType == BuiltinTypeSpec.Type.Dynamic) {
 				Module.PredefinedAttributes.Dynamic.EmitAttribute (FieldBuilder);
-			} else if (!(Parent is CompilerGeneratedClass) && member_type.HasDynamicElement) {
+			} else if (!Parent.IsCompilerGenerated && member_type.HasDynamicElement) {
 				Module.PredefinedAttributes.Dynamic.EmitAttribute (FieldBuilder, member_type, Location);
 			}
 
 			if ((ModFlags & Modifiers.COMPILER_GENERATED) != 0 && !Parent.IsCompilerGenerated)
 				Module.PredefinedAttributes.CompilerGenerated.EmitAttribute (FieldBuilder);
+			if ((ModFlags & Modifiers.DEBUGGER_HIDDEN) != 0)
+				Module.PredefinedAttributes.DebuggerBrowsable.EmitAttribute (FieldBuilder, System.Diagnostics.DebuggerBrowsableState.Never);
 
 			if (OptAttributes != null) {
 				OptAttributes.Emit ();
@@ -348,9 +358,9 @@ namespace Mono.CSharp
 			return fs;
 		}
 
-		public override List<TypeSpec> ResolveMissingDependencies ()
+		public override List<MissingTypeSpecReference> ResolveMissingDependencies (MemberSpec caller)
 		{
-			return memberType.ResolveMissingDependencies ();
+			return memberType.ResolveMissingDependencies (this);
 		}
 	}
 
@@ -360,7 +370,7 @@ namespace Mono.CSharp
 	public class FixedField : FieldBase
 	{
 		public const string FixedElementName = "FixedElementField";
-		static int GlobalCounter = 0;
+		static int GlobalCounter;
 
 		TypeBuilder fixed_buffer_type;
 
@@ -372,7 +382,7 @@ namespace Mono.CSharp
 			Modifiers.PRIVATE |
 			Modifiers.UNSAFE;
 
-		public FixedField (DeclSpace parent, FullNamedExpression type, Modifiers mod, MemberName name, Attributes attrs)
+		public FixedField (TypeDefinition parent, FullNamedExpression type, Modifiers mod, MemberName name, Attributes attrs)
 			: base (parent, type, mod, AllowedModifiers, name, attrs)
 		{
 		}
@@ -390,7 +400,7 @@ namespace Mono.CSharp
 
 		public override Constant ConvertInitializer (ResolveContext rc, Constant expr)
 		{
-			return expr.ImplicitConversionRequired (rc, rc.BuiltinTypes.Int, Location);
+			return expr.ImplicitConversionRequired (rc, rc.BuiltinTypes.Int);
 		}
 
 		public override bool Define ()
@@ -403,13 +413,12 @@ namespace Mono.CSharp
 					"`{0}': Fixed size buffers type must be one of the following: bool, byte, short, int, long, char, sbyte, ushort, uint, ulong, float or double",
 					GetSignatureForError ());
 			} else if (declarators != null) {
-				var t = new TypeExpression (MemberType, TypeExpression.Location);
-				int index = Parent.PartialContainer.Fields.IndexOf (this);
 				foreach (var d in declarators) {
-					var f = new FixedField (Parent, t, ModFlags, new MemberName (d.Name.Value, d.Name.Location), OptAttributes);
+					var f = new FixedField (Parent, d.GetFieldTypeExpression (this), ModFlags, new MemberName (d.Name.Value, d.Name.Location), OptAttributes);
 					f.initializer = d.Initializer;
 					((ConstInitializer) f.initializer).Name = d.Name.Value;
-					Parent.PartialContainer.Fields.Insert (++index, f);
+					f.Define ();
+					Parent.PartialContainer.Members.Add (f);
 				}
 			}
 			
@@ -424,7 +433,7 @@ namespace Mono.CSharp
 			FieldBuilder = Parent.TypeBuilder.DefineField (Name, fixed_buffer_type, ModifiersExtensions.FieldAttr (ModFlags));
 
 			var element_spec = new FieldSpec (null, this, MemberType, ffield, ModFlags);
-			spec = new FixedFieldSpec (Parent.Definition, this, FieldBuilder, element_spec, ModFlags);
+			spec = new FixedFieldSpec (Module, Parent.Definition, this, FieldBuilder, element_spec, ModFlags);
 
 			Parent.MemberCache.AddMember (spec);
 			return true;
@@ -477,7 +486,7 @@ namespace Mono.CSharp
 
 			if (buffer_size > int.MaxValue / type_size) {
 				Report.Error (1664, Location, "Fixed size buffer `{0}' of length `{1}' and type `{2}' exceeded 2^31 limit",
-					GetSignatureForError (), buffer_size.ToString (), TypeManager.CSharpName (MemberType));
+					GetSignatureForError (), buffer_size.ToString (), MemberType.GetSignatureForError ());
 				return;
 			}
 
@@ -529,8 +538,8 @@ namespace Mono.CSharp
 	{
 		readonly FieldSpec element;
 
-		public FixedFieldSpec (TypeSpec declaringType, IMemberDefinition definition, FieldInfo info, FieldSpec element, Modifiers modifiers)
-			: base (declaringType, definition, element.MemberType, info, modifiers)
+		public FixedFieldSpec (ModuleContainer module, TypeSpec declaringType, IMemberDefinition definition, FieldInfo info, FieldSpec element, Modifiers modifiers)
+			: base (declaringType, definition, PointerContainer.MakeType (module, element.MemberType), info, modifiers)
 		{
 			this.element = element;
 
@@ -543,10 +552,10 @@ namespace Mono.CSharp
 				return element;
 			}
 		}
-
+		
 		public TypeSpec ElementType {
 			get {
-				return MemberType;
+				return element.MemberType;
 			}
 		}
 	}
@@ -569,8 +578,7 @@ namespace Mono.CSharp
 			Modifiers.UNSAFE |
 			Modifiers.READONLY;
 
-		public Field (DeclSpace parent, FullNamedExpression type, Modifiers mod, MemberName name,
-			      Attributes attrs)
+		public Field (TypeDefinition parent, FullNamedExpression type, Modifiers mod, MemberName name, Attributes attrs)
 			: base (parent, type, mod, AllowedModifiers, name, attrs)
 		{
 		}
@@ -632,19 +640,17 @@ namespace Mono.CSharp
 			}
 
 			if (initializer != null) {
-				((TypeContainer) Parent).RegisterFieldForInitialization (this,
-					new FieldInitializer (spec, initializer, this));
+				Parent.RegisterFieldForInitialization (this, new FieldInitializer (this, initializer, TypeExpression.Location));
 			}
 
 			if (declarators != null) {
-				var t = new TypeExpression (MemberType, TypeExpression.Location);
-				int index = Parent.PartialContainer.Fields.IndexOf (this);
 				foreach (var d in declarators) {
-					var f = new Field (Parent, t, ModFlags, new MemberName (d.Name.Value, d.Name.Location), OptAttributes);
+					var f = new Field (Parent, d.GetFieldTypeExpression (this), ModFlags, new MemberName (d.Name.Value, d.Name.Location), OptAttributes);
 					if (d.Initializer != null)
 						f.initializer = d.Initializer;
 
-					Parent.PartialContainer.Fields.Insert (++index, f);
+					f.Define ();
+					Parent.PartialContainer.Members.Add (f);
 				}
 			}
 
@@ -661,7 +667,7 @@ namespace Mono.CSharp
 			if ((ModFlags & Modifiers.VOLATILE) != 0) {
 				if (!CanBeVolatile ()) {
 					Report.Error (677, Location, "`{0}': A volatile field cannot be of the type `{1}'",
-						GetSignatureForError (), TypeManager.CSharpName (MemberType));
+						GetSignatureForError (), MemberType.GetSignatureForError ());
 				}
 
 				if ((ModFlags & Modifiers.READONLY) != 0) {

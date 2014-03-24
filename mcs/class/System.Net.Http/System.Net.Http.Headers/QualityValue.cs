@@ -38,7 +38,7 @@ namespace System.Net.Http.Headers
 			if (parameters == null)
 				return null;
 
-			var found = parameters.Find (l => StringComparer.OrdinalIgnoreCase.Equals (l.Name, "q"));
+			var found = parameters.Find (l => string.Equals (l.Name, "q", StringComparison.OrdinalIgnoreCase));
 			if (found == null)
 				return null;
 
@@ -57,18 +57,7 @@ namespace System.Net.Http.Headers
 			if (parameters == null)
 				parameters = new List<NameValueHeaderValue> ();
 
-			var found = parameters.Find (l => StringComparer.OrdinalIgnoreCase.Equals (l.Name, "q"));
-
-			if (value.HasValue) {
-				string svalue = value.Value.ToString (NumberFormatInfo.InvariantInfo);
-
-				if (found == null)
-					parameters.Add (new NameValueHeaderValue (new NameValueHeaderValue ("q", svalue)));
-				else
-					found.Value = svalue;
-			} else {
-				parameters.Remove (found);
-			}
+			parameters.SetValue ("q", value == null ? null : value.Value.ToString (NumberFormatInfo.InvariantInfo));
 		}
 	}
 }

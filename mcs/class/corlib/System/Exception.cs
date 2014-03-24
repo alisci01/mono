@@ -29,6 +29,7 @@
 //
 
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
@@ -44,7 +45,11 @@ namespace System
 	[ComDefaultInterface (typeof (_Exception))]
 	[ClassInterface (ClassInterfaceType.None)]
 	[StructLayout (LayoutKind.Sequential)]
+#if MOBILE
+	public class Exception : ISerializable
+#else
 	public class Exception : ISerializable, _Exception
+#endif
 	{
 #pragma warning disable 169, 649
 		#region Sync with object-internals.h
@@ -63,6 +68,7 @@ namespace System
 		string source;
 		IDictionary _data;
 		StackTrace[] captured_traces;
+		IntPtr[] native_trace_ips;
 		#endregion
 #pragma warning restore 169, 649
 
@@ -114,11 +120,17 @@ namespace System
 			set { help_link = value; }
 		}
 
+#if NET_4_5
+		public int HResult {
+			get { return hresult; }
+			protected set { hresult = value; }
+		}
+#else
 		protected int HResult {
 			get { return hresult; }
 			set { hresult = value; }
 		}
-
+#endif
 		internal void SetMessage (string s)
 		{
 			message = s;
@@ -181,8 +193,10 @@ namespace System
 			}
 		}
 
-		void AddFrames (StringBuilder sb, string newline, string unknown, StackTrace st) {
-			for (int i = 0; i < st.FrameCount; i++) {
+		bool AddFrames (StringBuilder sb, string newline, string unknown, StackTrace st)
+		{
+			int i;
+			for (i = 0; i < st.FrameCount; i++) {
 				StackFrame frame = st.GetFrame (i);
 				if (i == 0)
 					sb.AppendFormat ("  {0} ", Locale.GetText ("at"));
@@ -207,6 +221,8 @@ namespace System
 									 frame.GetFileLineNumber ());
 				}
 			}
+
+			return i != 0;
 		}
 
 		public virtual string StackTrace {
@@ -226,7 +242,9 @@ namespace System
 				// Add traces captured using ExceptionDispatchInfo
 				if (captured_traces != null) {
 					foreach (var t in captured_traces) {
-						AddFrames (sb, newline, unknown, t);
+						if (!AddFrames (sb, newline, unknown, t))
+							continue;
+
 						sb.Append (Environment.NewLine);
 						sb.Append ("--- End of stack trace from previous location where exception was thrown ---");
 						sb.Append (Environment.NewLine);
@@ -256,7 +274,7 @@ namespace System
 			get {
 				if (_data == null) {
 					// default to empty dictionary
-					_data = (IDictionary) new Hashtable ();
+					_data = new Dictionary<object, object> ();
 				}
 				return _data;
 			}
@@ -291,11 +309,7 @@ namespace System
 			info.AddValue ("RemoteStackTraceString", _remoteStackTraceString);
 			info.AddValue ("RemoteStackIndex", remote_stack_index);
 			info.AddValue ("HResult", hresult);
-#if !MOONLIGHT
 			info.AddValue ("Source", Source);
-#else
-			info.AddValue ("Source", null);
-#endif
 			info.AddValue ("ExceptionMethod", null);
 			info.AddValue ("Data", _data, typeof (IDictionary));
 		}
@@ -337,7 +351,7 @@ namespace System
 
 		internal void GetFullNameForStackTrace (StringBuilder sb, MethodBase mi)
 		{
-			ParameterInfo[] p = mi.GetParameters ();
+			ParameterInfo[] p = mi.GetParametersInternal ();
 			sb.Append (mi.DeclaringType.ToString ());
 			sb.Append (".");
 			sb.Append (mi.Name);
@@ -358,7 +372,7 @@ namespace System
 				if (i > 0)
 					sb.Append (", ");
 				Type pt = p[i].ParameterType;
-				if (pt.IsClass && pt.Namespace != String.Empty) {
+				if (pt.IsClass && !String.IsNullOrEmpty (pt.Namespace)) {
 					sb.Append (pt.Namespace);
 					sb.Append (".");
 				}
@@ -372,11 +386,10 @@ namespace System
 		}
 
 		// For ExceptionDispatchInfo
-		internal void CaptureTrace () {
+		internal void CaptureTrace ()
+		{
 			if (captured_traces != null) {
-				StackTrace[] new_traces = new StackTrace [captured_traces.Length + 1];
-				Array.Copy (captured_traces, new_traces, captured_traces.Length);
-				captured_traces = new_traces;
+				Array.Resize (ref captured_traces, captured_traces.Length + 1);
 			} else {
 				captured_traces = new StackTrace [1];
 			}

@@ -18,6 +18,7 @@
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/debug-helpers.h>
 #include <mono/utils/mono-mmap.h>
+#include <mono/utils/mono-hwcap-mips.h>
 
 #include <mono/arch/mips/mips-codegen.h>
 
@@ -31,7 +32,8 @@
 #define ALWAYS_SAVE_RA		1	/* call-handler & switch currently clobber ra */
 
 #define PROMOTE_R4_TO_R8	1	/* promote single values in registers to doubles */
-#define USE_MUL			1	/* use mul instead of mult/mflo for multiply */
+#define USE_MUL			0	/* use mul instead of mult/mflo for multiply
+							   remember to update cpu-mips.md if you change this */
 
 /* Emit a call sequence to 'v', using 'D' as a scratch register if necessary */
 #define mips_call(c,D,v) do {	\
@@ -62,7 +64,6 @@ int mono_exc_esp_offset = 0;
 static int tls_mode = TLS_MODE_DETECT;
 static int lmf_pthread_key = -1;
 static int monothread_key = -1;
-static int monodomain_key = -1;
 
 /* Whenever the host is little-endian */
 static int little_endian;
@@ -495,7 +496,7 @@ emit_memcpy (guint8 *code, int size, int dreg, int doffset, int sreg, int soffse
  * Returns the size of the activation frame.
  */
 int
-mono_arch_get_argument_info (MonoMethodSignature *csig, int param_count, MonoJitArgumentInfo *arg_info)
+mono_arch_get_argument_info (MonoGenericSharingContext *gsctx, MonoMethodSignature *csig, int param_count, MonoJitArgumentInfo *arg_info)
 {
 	int k, frame_size = 0;
 	guint32 size, align, pad;
@@ -596,13 +597,16 @@ mono_arch_get_delegate_invoke_impls (void)
 	guint8 *code;
 	guint32 code_len;
 	int i;
+	char *tramp_name;
 
 	code = get_delegate_invoke_impl (TRUE, 0, &code_len);
-	res = g_slist_prepend (res, mono_tramp_info_create (g_strdup ("delegate_invoke_impl_has_target"), code, code_len, NULL, NULL));
+	res = g_slist_prepend (res, mono_tramp_info_create ("delegate_invoke_impl_has_target", code, code_len, NULL, NULL));
 
 	for (i = 0; i <= MAX_ARCH_DELEGATE_PARAMS; ++i) {
 		code = get_delegate_invoke_impl (FALSE, i, &code_len);
-		res = g_slist_prepend (res, mono_tramp_info_create (g_strdup_printf ("delegate_invoke_impl_target_%d", i), code, code_len, NULL, NULL));
+		tramp_name = g_strdup_printf ("delegate_invoke_impl_target_%d", i);
+		res = g_slist_prepend (res, mono_tramp_info_create (tramp_name, code, code_len, NULL, NULL));
+		g_free (tramp_name);
 	}
 
 	return res;
@@ -716,13 +720,26 @@ mono_arch_cleanup (void)
  * This function returns the optimizations supported on this cpu.
  */
 guint32
-mono_arch_cpu_optimizazions (guint32 *exclude_mask)
+mono_arch_cpu_optimizations (guint32 *exclude_mask)
 {
 	guint32 opts = 0;
 
 	/* no mips-specific optimizations yet */
 	*exclude_mask = 0;
 	return opts;
+}
+
+/*
+ * This function test for all SIMD functions supported.
+ *
+ * Returns a bitmask corresponding to all supported versions.
+ *
+ */
+guint32
+mono_arch_cpu_enumerate_simd_versions (void)
+{
+	/* SIMD is currently unimplemented */
+	return 0;
 }
 
 GList *
@@ -1307,36 +1324,11 @@ get_call_info (MonoGenericSharingContext *gsctx, MonoMemPool *mp, MonoMethodSign
 	return cinfo;
 }
 
-G_GNUC_UNUSED static void
-break_count (void)
-{
-}
-
-G_GNUC_UNUSED static gboolean
-debug_count (void)
-{
-	static int count = 0;
-	count ++;
-
-	if (!getenv ("COUNT"))
-		return TRUE;
-
-	if (count == atoi (getenv ("COUNT"))) {
-		break_count ();
-	}
-
-	if (count > atoi (getenv ("COUNT"))) {
-		return FALSE;
-	}
-
-	return TRUE;
-}
-
 static gboolean
 debug_omit_fp (void)
 {
 #if 0
-	return debug_count ();
+	return mono_debug_count ();
 #else
 	return TRUE;
 #endif
@@ -4037,11 +4029,19 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			mips_addiu (code, ins->dreg, mips_sp, area_offset);
 
 			if (ins->flags & MONO_INST_INIT) {
+				guint32 *buf;
+
+				buf = (guint32*)(void*)code;
+				mips_beq (code, mips_at, mips_zero, 0);
+				mips_nop (code);
+
 				mips_move (code, mips_temp, ins->dreg);
 				mips_sb (code, mips_zero, mips_temp, 0);
 				mips_addiu (code, mips_at, mips_at, -1);
 				mips_bne (code, mips_at, mips_zero, -3);
 				mips_addiu (code, mips_temp, mips_temp, 1);
+
+				mips_patch (buf, (guint32)code);
 			}
 			break;
 		}
@@ -5235,11 +5235,6 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		pos++;
 	}
 
-	if (method->wrapper_type == MONO_WRAPPER_NATIVE_TO_MANAGED) {
-		mips_load_const (code, mips_a0, cfg->domain);
-		mips_call (code, mips_t9, (gpointer)mono_jit_thread_attach);
-	}
-
 	if (method->save_lmf) {
 		mips_load_const (code, mips_at, MIPS_LMF_MAGIC1);
 		mips_sw (code, mips_at, mips_sp, lmf_offset + G_STRUCT_OFFSET(MonoLMF, magic));
@@ -5760,11 +5755,6 @@ setup_tls_access (void)
 		}
 #endif
 	}
-	if (monodomain_key == -1) {
-		ptk = mono_domain_get_tls_key ();
-		if (ptk < 1024)
-			monodomain_key = ptk;
-	}
 	if (lmf_pthread_key == -1) {
 		ptk = mono_jit_tls_id;
 		if (ptk < 1024) {
@@ -5788,7 +5778,7 @@ setup_tls_access (void)
 }
 
 void
-mono_arch_setup_jit_tls_data (MonoJitTlsData *tls)
+mono_arch_finish_init (void)
 {
 	setup_tls_access ();
 }
@@ -5846,19 +5836,6 @@ gboolean
 mono_arch_print_tree (MonoInst *tree, int arity)
 {
 	return 0;
-}
-
-MonoInst* mono_arch_get_domain_intrinsic (MonoCompile* cfg)
-{
-	MonoInst* ins;
-
-	setup_tls_access ();
-	if (monodomain_key == -1)
-		return NULL;
-	
-	MONO_INST_NEW (cfg, ins, OP_TLS_GET);
-	ins->inst_offset = monodomain_key;
-	return ins;
 }
 
 mgreg_t
@@ -6153,6 +6130,15 @@ mono_arch_get_seq_point_info (MonoDomain *domain, guint8 *code)
 {
 	NOT_IMPLEMENTED;
 	return NULL;
+}
+
+void
+mono_arch_init_lmf_ext (MonoLMFExt *ext, gpointer prev_lmf)
+{
+	ext->lmf.previous_lmf = prev_lmf;
+	/* Mark that this is a MonoLMFExt */
+	ext->lmf.previous_lmf = (gpointer)(((gssize)ext->lmf.previous_lmf) | 2);
+	ext->lmf.iregs [mips_sp] = (gssize)ext;
 }
 
 #endif /* MONO_ARCH_SOFT_DEBUG_SUPPORTED */
